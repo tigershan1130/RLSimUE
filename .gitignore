@@ -1,0 +1,30 @@
+# Don't add packaged binaries
+Packaged/
+
+# don't check-in generated files
+*.sln
+*_BuiltData.uasset
+/.kdev/
+/*.kdev4
+/*.pro
+/*.workspace
+/*CodeCompletionFolders.txt
+/*CodeLitePreProcessor.txt
+/*.pri
+/CMakeLists.txt
+/Makefile
+
+# avoid checking uproject because this is usually just version change
+
+
+# avoid checking in MacOS XCode assets
+*.xcworkspace
+/.vs
+/Binaries
+/Intermediate
+/PythonClient/airsim/__pycache__
+/PythonClient/venv
+/Saved
+/Plugins/AirSim/Binaries
+/Plugins/AirSim/Intermediate
+/Plugins/AirSim/Intermediate
