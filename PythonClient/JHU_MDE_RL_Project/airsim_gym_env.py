@@ -12,12 +12,14 @@ class AirSimMultirotorEnv(gym.Env):
     def __init__(self, target_radius=500.0, depth_image_size=(84, 84)):
         super().__init__()
         
+        print("Connect to AirSim...")
         # Connect to AirSim
         self.client = airsim.MultirotorClient()
         self.client.confirmConnection()
         self.client.enableApiControl(True)
         self.client.armDisarm(True)
         
+        print("initialize bounds...")
         # Unreal Engine coordinate system in centimeters
         self.bounds = {
             'x_min': -20000, 'x_max': 20000,
@@ -37,6 +39,7 @@ class AirSimMultirotorEnv(gym.Env):
         self.current_target = None
         self.max_speed = 1500.0  # cm/s
         self.collision_penalty = -1000
+        self.out_of_bounds_penalty = -800  # Slightly less than collision but still severe
         self.success_reward = 1000
         self.step_penalty = -0.1
         self.previous_distance = None
@@ -78,6 +81,7 @@ class AirSimMultirotorEnv(gym.Env):
         
     def _setup_depth_camera(self):
         """Configure the depth camera in AirSim"""
+        print("config depth camera...")
         #self.client.simSetCameraOrientation(0, airsim.to_quaternion(0, 0, 0))
         
     def _get_drone_state(self):
@@ -114,6 +118,63 @@ class AirSimMultirotorEnv(gym.Env):
         position, _, _ = self._get_drone_state()
         return position
     
+    def _is_out_of_bounds(self, position):
+        """Check if drone is outside the defined boundaries"""
+        x, y, z = position
+        
+        # Check if position exceeds any boundary
+        if (x < self.bounds['x_min'] or x > self.bounds['x_max'] or
+            y < self.bounds['y_min'] or y > self.bounds['y_max'] or
+            z < self.bounds['z_min'] or z > self.bounds['z_max']):
+            return True
+        return False
+    
+    def _get_boundary_distance_penalty(self, position):
+        """Calculate penalty based on how far outside bounds the drone is"""
+        x, y, z = position
+        
+        # Calculate how far outside each boundary
+        x_violation = max(self.bounds['x_min'] - x, 0, x - self.bounds['x_max'])
+        y_violation = max(self.bounds['y_min'] - y, 0, y - self.bounds['y_max'])
+        z_violation = max(self.bounds['z_min'] - z, 0, z - self.bounds['z_max'])
+        
+        # Total violation distance
+        total_violation = x_violation + y_violation + z_violation
+        
+        # Progressive penalty - more penalty the further out of bounds
+        if total_violation > 0:
+            return -total_violation / 1000.0  # Scale penalty appropriately
+        return 0.0
+    
+    def _get_proximity_to_boundary_reward(self, position):
+        """Reward for staying away from boundaries (safety margin)"""
+        x, y, z = position
+        
+        # Calculate distance to each boundary
+        dist_to_x_min = x - self.bounds['x_min']
+        dist_to_x_max = self.bounds['x_max'] - x
+        dist_to_y_min = y - self.bounds['y_min']
+        dist_to_y_max = self.bounds['y_max'] - y
+        dist_to_z_min = z - self.bounds['z_min']
+        dist_to_z_max = self.bounds['z_max'] - z
+        
+        # Find the minimum distance to any boundary
+        min_distance = min(dist_to_x_min, dist_to_x_max, dist_to_y_min, 
+                          dist_to_y_max, dist_to_z_min, dist_to_z_max)
+        
+        # Small positive reward for staying away from boundaries
+        # More reward when further from boundaries
+        if min_distance > 2000:  # 20m safety margin
+            return 0.1
+        elif min_distance > 1000:  # 10m safety margin
+            return 0.05
+        elif min_distance > 500:   # 5m safety margin
+            return 0.02
+        elif min_distance < 100:   # Too close to boundary
+            return -0.1
+        else:
+            return 0.0
+    
     def _get_depth_image(self):
         """Capture and process depth image from AirSim"""
         try:
@@ -133,7 +194,7 @@ class AirSimMultirotorEnv(gym.Env):
                     self.depth_image_size, 
                     interpolation=cv2.INTER_AREA
                 )
-                depth_normalized = np.clip(depth_resized / 100.0, 0.0, 1.0)
+                depth_normalized = np.clip(depth_array / 100.0, 0.0, 1.0)
                 depth_normalized = np.expand_dims(depth_normalized, axis=-1)
                 return depth_normalized
             else:
@@ -266,9 +327,10 @@ class AirSimMultirotorEnv(gym.Env):
         observation = self._get_observation()
         distance = self._distance_to_target(position)
         collided = self._has_collided()
+        out_of_bounds = self._is_out_of_bounds(position)
         
-        # Calculate reward with velocity-based penalties
-        reward = self._compute_reward(distance, collided, linear_vel, angular_vel)
+        # Calculate reward with boundary checking
+        reward = self._compute_reward(distance, collided, out_of_bounds, linear_vel, angular_vel, position)
         
         # Check termination conditions
         terminated = False
@@ -277,28 +339,39 @@ class AirSimMultirotorEnv(gym.Env):
         if collided:
             terminated = True
             reward += self.collision_penalty
+            print("Episode terminated: Collision detected!")
+        elif out_of_bounds:
+            terminated = True
+            reward += self.out_of_bounds_penalty
+            print(f"Episode terminated: Out of bounds! Position: {position}")
         elif distance < self.target_radius:
             terminated = True
             reward += self.success_reward
+            print("Episode terminated: Target reached!")
         
         self.previous_distance = distance
         
         info = {
             "distance_to_target": distance,
             "collision": collided,
+            "out_of_bounds": out_of_bounds,
             "target_reached": distance < self.target_radius,
             "drone_position": position,
             "drone_velocity": linear_vel,
             "drone_angular_velocity": angular_vel,
-            "target_position": self.current_target
+            "target_position": self.current_target,
+            "is_out_of_bounds": out_of_bounds  # Duplicate for compatibility
         }
         
         return observation, reward, terminated, truncated, info
     
-    def _compute_reward(self, distance, collided, linear_vel, angular_vel):
-        """Enhanced reward function with velocity-based penalties"""
+    def _compute_reward(self, distance, collided, out_of_bounds, linear_vel, angular_vel, position):
+        """Enhanced reward function with boundary checking and velocity-based penalties"""
         if collided:
             return self.collision_penalty
+        
+        if out_of_bounds:
+            return self.out_of_bounds_penalty
         
         if distance < self.target_radius:
             return self.success_reward
@@ -321,6 +394,14 @@ class AirSimMultirotorEnv(gym.Env):
         angular_speed = math.sqrt(angular_vel[0]**2 + angular_vel[1]**2 + angular_vel[2]**2)
         if angular_speed > 45.0:  # If angular speed > 45 deg/s
             reward -= 0.3
+        
+        # Boundary proximity rewards/penalties
+        boundary_reward = self._get_proximity_to_boundary_reward(position)
+        reward += boundary_reward
+        
+        # Progressive out-of-bounds penalty (even if not fully out of bounds yet)
+        boundary_penalty = self._get_boundary_distance_penalty(position)
+        reward += boundary_penalty
         
         # Reward efficient movement toward target
         if distance < self.previous_distance:

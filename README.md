@@ -33,10 +33,7 @@ We formulate drone navigation as a **Partially Observable Markov Decision Proces
 | Algorithm | Why Not Chosen |
 |-----------|----------------|
 | **PPO** | Less sample efficient for robotics, slower convergence |
-| **DDPG** | Tends to overestimate Q-values, unstable |
-| **SAC** | More complex, harder to tune for precise navigation |
-| **A2C** | Less sample efficient for complex continuous control |
-
+| **DDPG/DQN** | Tends to overestimate Q-values, unstable |
 
 ## Why EnhancedFeatureExtractor?
 

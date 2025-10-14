@@ -29,7 +29,12 @@ class EnhancedTrainingCallback(BaseCallback):
         return True
 
 # Create enhanced environment
+print("Initialize AirSimMultirotorEnv...")
 env = AirSimMultirotorEnv(depth_image_size=(84, 84))
+
+
+print("Initialize TD3 model...")
+
 
 # Initialize model with enhanced feature extractor
 model = TD3(
