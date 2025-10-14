@@ -99,7 +99,6 @@ TD3 addresses the overestimation bias of DDPG by introducing two critic networks
 Additionally, TD3 uses delayed policy updates, which means the policy is updated less frequently than the critics. It can also use replay buffer for simlar temporal storage from training. The momentum and dynamics handling would be better.
 
 ### Expected Performance
-* Navigation Accuracy: >90% target reach rate
-* Collision Avoidance: <5% collision rate
-* Path Efficiency: Within 120% of optimal path length
-* Training Stability: Consistent learning curves
+* Navigation Accuracy: ??
+* Collision Avoidance: ??
+* Training Stability: Consistent learning curve?
