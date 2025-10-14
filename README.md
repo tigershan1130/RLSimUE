@@ -57,8 +57,7 @@ Navigate to the project directory and start the training script:
 ```bash
 cd .\PythonClient\JHU_MDE_RL_Project\
 python train_agent.py
-#or
-python troubleShootAirsim.py
+#or test airsim with python troubleShootAirsim.py
 ```
 
 
