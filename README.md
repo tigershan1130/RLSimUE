@@ -66,6 +66,9 @@ python train_agent.py
 ### Reinforcement Learning Framework
 We formulate drone navigation as a **Partially Observable Markov Decision Process (POMDP)** where the agent learns optimal policies through trial and error:
 
+![Screenshot1](https://private-user-images.githubusercontent.com/39791762/501044347-f3ffabd0-ff63-41cd-94f1-ce5f14a4612b.jpg?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NjA0NTg2ODgsIm5iZiI6MTc2MDQ1ODM4OCwicGF0aCI6Ii8zOTc5MTc2Mi81MDEwNDQzNDctZjNmZmFiZDAtZmY2My00MWNkLTk0ZjEtY2U1ZjE0YTQ2MTJiLmpwZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNTEwMTQlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjUxMDE0VDE2MTMwOFomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTljYjBkNDJkZjBkY2EyOWFjNWJiNTg3MDU0NDMzOTUwMzcwOThjOTc0MzAzMzAxNmY2ZTA4NTMwYTc1OWVmNWEmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0In0.2lRq6mDOUoobsx-gzLGxenZWfcbmmWK8l8n6YAUAI5o)
+
+
 * **Agent**: Multirotor drone
 * **Environment**: AirSim simulation with Unreal Engine  
 * **State**: Multi-modal observations (position, velocity, depth images)
