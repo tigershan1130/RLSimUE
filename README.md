@@ -1,6 +1,6 @@
 ﻿# AirSim TD3 Multirotor Reinforcement Learning
 
-![Screenshot](https://github.com/tigershan1130/RLSimUE/blob/main/Images/Environment.png)
+![Screenshot](https://github.com/tigershan1130/RLSimUE/blob/main/Images/Environment.jpg)
 
 
 ## Project Overview
