@@ -82,26 +82,22 @@ We formulate drone navigation as a **Partially Observable Markov Decision Proces
 ## Why TD3 Algorithm?
 
 ### Advantages for Drone Navigation
-* **Continuous Action Space**: TD3 excels in continuous control tasks like velocity control
-* **Sample Efficiency**: Off-policy nature allows replay buffer utilization  
-* **Stability**: Twin critics and delayed updates prevent overestimation
-* **Deterministic Policies**: Provides consistent navigation behavior
+* **PPO (Proximal Policy Optimization):
+PPO is an on-policy algorithm, meaning it discards data after each update. This leads to lower sample efficiency compared to off-policy methods like TD3.
+In robotics tasks, where data collection can be time-consuming and expensive, sample efficiency is crucial.
+PPO typically requires more interactions with the environment to converge, which can be slow in a high-fidelity simulation like AirSim.
 
-### Comparison with Other Algorithms
-| Algorithm | Why Not Chosen |
-|-----------|----------------|
-| **PPO** | Less sample efficient for robotics, slower convergence |
-| **DDPG/DQN** | Tends to overestimate Q-values, unstable |
+* **DQN (Deep Q-Network):
+DQN is designed for discrete action spaces. Our drone control task requires continuous control (continuous action space), so DQN is not directly applicable without discretization, which can lead to the curse of dimensionality and loss of fine control.
 
-## Why EnhancedFeatureExtractor?
+* **DDPG (Deep Deterministic Policy Gradient):
+DDPG is an actor-critic method for continuous control. However, it is known to be prone to overestimating Q-values, which can lead to unstable training and suboptimal policies.
+The overestimation bias in DDPG arises because the same network is used to select and evaluate the next action. This can be particularly problematic in environments with high-dimensional observation spaces and complex dynamics, such as drone navigation.
 
-### The Multi-Modal Challenge
-Drone navigation requires processing **heterogeneous input types**:
-* **Low-dimensional vectors**: Position, velocity, target information
-* **High-dimensional images**: Depth maps for obstacle perception
-
-### Architecture Benefits
-
+* **TD3 (Twin Delayed DDPG)(We decided to use):
+TD3 addresses the overestimation bias of DDPG by introducing two critic networks (twin) and taking the minimum of their Q-values for the target. This reduces overestimation and leads to more stable training.
+Additionally, TD3 uses delayed policy updates, which means the policy is updated less frequently than the critics. This allows the value function to stabilize before updating the policy, further improving stability.
+The deterministic policy in TD3 is suitable for drone control where consistent actions are desired, and the continuous action space is naturally handled.
 
 ### Expected Performance
 * Navigation Accuracy: >90% target reach rate
