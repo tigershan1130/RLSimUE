@@ -96,8 +96,7 @@ The overestimation bias in DDPG arises because the same network is used to selec
 
 * TD3 (Twin Delayed DDPG)(We decided to use):
 TD3 addresses the overestimation bias of DDPG by introducing two critic networks (twin) and taking the minimum of their Q-values for the target. This reduces overestimation and leads to more stable training.
-Additionally, TD3 uses delayed policy updates, which means the policy is updated less frequently than the critics. This allows the value function to stabilize before updating the policy, further improving stability.
-The deterministic policy in TD3 is suitable for drone control where consistent actions are desired, and the continuous action space is naturally handled.
+Additionally, TD3 uses delayed policy updates, which means the policy is updated less frequently than the critics. It can also use replay buffer for simlar temporal storage from training. The momentum and dynamics handling would be better.
 
 ### Expected Performance
 * Navigation Accuracy: >90% target reach rate
