@@ -6,6 +6,62 @@
 ## Project Overview
 This project implements a **Deep Reinforcement Learning (DRL)** system for autonomous drone navigation in Microsoft AirSim using Stable-Baselines3. The drone learns to navigate to randomly generated target points while avoiding collisions using the **Twin Delayed DDPG (TD3)** algorithm with multi-modal observations.
 
+
+## 🚀 AirSim TD3 Multirotor Quick Setup Instructions
+
+### 1. Download and Setup Unreal Engine Executable
+- Download the latest release of Unreal Engine executable
+- Ensure the executable is properly installed and configured
+
+### 2. Configure AirSim Settings
+Create or modify the AirSim configuration file at `Users\Documents\AirSim\settings.json`:
+
+```json
+{
+  "SeeDocsAt": "https://github.com/Microsoft/AirSim/blob/main/docs/settings.md",
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor"
+}
+```
+### 3. Python Environment Setup
+
+#### Create Virtual Environment and install required packages.
+```bash
+# Create virtual environment
+python -m venv airsim_env
+
+# Activate virtual environment
+# On Windows:
+airsim_env\Scripts\activate
+# On macOS/Linux:
+source airsim_env/bin/activate
+
+# Activate virtual environment
+# On Windows:
+airsim_env\Scripts\activate
+# On macOS/Linux:
+source airsim_env/bin/activate
+
+# Install required packages
+pip install -r requirements.txt
+```
+
+### 4. Launch Project
+
+#### Start Unreal Engine
+- Launch your Unreal Engine executable with the AirSim environment
+
+#### Run Python Training
+Navigate to the project directory and start the training script:
+
+```bash
+cd .\PythonClient\JHU_MDE_RL_Project\
+python train_agent.py
+#or
+python troubleShootAirsim.py
+```
+
+
 ## Methodology
 
 ### Reinforcement Learning Framework
