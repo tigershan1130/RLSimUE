@@ -73,7 +73,7 @@ We formulate drone navigation as a **Partially Observable Markov Decision Proces
 * **Environment**: AirSim simulation with Unreal Engine  
 * **State**: Multi-modal observations (position, velocity, depth images)
 * **Actions**: Velocity commands in 3D space + yaw rate
-* **Rewards**: Sparse + shaped rewards for efficient navigation
+* **Rewards**: Sparse + shaped rewards for efficient navigation and obstacle avoidance
 
 ### Training Pipeline 
 
