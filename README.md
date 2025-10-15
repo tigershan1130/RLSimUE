@@ -81,6 +81,7 @@ Base on [1] paper, The full pipeline of the RL setup. The blue box is the simula
 
 ### Training Pipeline 
 ![Screenshot](https://private-user-images.githubusercontent.com/39791762/501609832-b1cb83a4-0aaf-4858-ac17-92f2a07d057f.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NjA1NDU2MDQsIm5iZiI6MTc2MDU0NTMwNCwicGF0aCI6Ii8zOTc5MTc2Mi81MDE2MDk4MzItYjFjYjgzYTQtMGFhZi00ODU4LWFjMTctOTJmMmEwN2QwNTdmLnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNTEwMTUlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjUxMDE1VDE2MjE0NFomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPWNjY2NhMjBhNjA2NjViNDExYTZjMzY0M2YxMWEwMjNjM2NiYjgwMDY5ZDIzZTAyNTBkNWU2MmM2OTBlOTllZWImWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0In0.oTM_Jnw5AJv7yXBmmquF4VjK8fpk-FAxjoTX1sIq-1g)
+
 This is referenced from paper[3]. SAC + VAE training pipeline.
 
 ### TODO(NEED TO DO MORE RESEARCH):
