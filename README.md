@@ -113,25 +113,24 @@ Both are Duel Actor-Critic model, D3QN is mentioned in paper[2]. But in Our Expe
 * Sample efficiency reduces training time and computational cost
 * Smooth control outputs prevent oscillatory and jerky flight behaviour
 
-## Comparison between TD3 and SAC(We are still consdering)
+### Comparison between TD3 and SAC(We are still consdering)
+We are comparing TD3 and SAC for our drone navigation task. We have a multi-modal observation space (depth image and vector states) and a continuous action space.
+We are thinking about TD3+CNN or SAC+VAE.
+
 * Algorithmic Differences:
-** TD3 (Twin Delayed Deep Deterministic Policy Gradient):
-Deterministic policy (outputs exact action)
-Uses twin Q-networks to reduce overestimation bias, delayed policy updates, and target policy smoothing.
-
-** SAC (Soft Actor-Critic):
-Stochastic policy (outputs a distribution over actions) with entropy regularization.
-Maximizes both expected return and entropy, which encourages exploration.
-
+- TD3 (Twin Delayed Deep Deterministic Policy Gradient): Deterministic policy (outputs exact action).
+-  SAC (Soft Actor-Critic): Stochastic policy (outputs a distribution over actions) with entropy regularization. Maximizes both expected return and entropy, which encourages exploration.
 
 * Exploration:
-** TD3: Explores by adding noise to the actions (e.g., Gaussian noise). The policy itself is deterministic.
-** SAC: The stochastic policy naturally explores, and the entropy term encourages trying new actions.
+- TD3: Explores by adding noise to the actions (e.g., Gaussian noise). The policy itself is deterministic.
+- SAC: The stochastic policy naturally explores, and the entropy term encourages trying new actions.
 
 * Handling Uncertainty: Our environment is partially observable.
-** SAC's stochastic policy may be better at handling uncertainty because it can learn to take a variety of actions in the same state (non-deterministic).
-** TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties.
+- SAC's stochastic policy may be better at handling uncertainty because it can learn to take a variety of actions in the same state (non-deterministic).
+- TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties.
 
+* Conclusion:
+  We choose TD3 for its simplicity and faster initial learning, and we believe that the deterministic policy is sufficient given the clear depth map and the static environment. However, we should be aware that if the environment has more dynamics (e.g., moving obstacles) or if the depth map is noisy, SAC might be more robust. We will proceed with TD3 and monitor the training. If we find that the drone is not exploring enough or gets stuck in suboptimal behaviors, we might reconsider SAC.
 
 ### Expected Performance (NEED TO DO MORE RESEARCH):
 * Navigation Accuracy: ??
