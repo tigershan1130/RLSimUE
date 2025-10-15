@@ -60,7 +60,7 @@ python train_agent.py
 ```
 
 
-## Methodology
+## :biohazard: Methodology
 
 ### Reinforcement Learning Framework
 
