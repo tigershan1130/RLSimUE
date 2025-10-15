@@ -129,7 +129,7 @@ We are thinking about TD3+CNN or SAC+VAE.
   - SAC's stochastic policy may be better at handling uncertainty because it can learn to take a variety of actions in the same state (non-deterministic).
   - TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties.
 
-### Conclusion:
+#### Conclusion:
   We choose TD3 for its simplicity and faster initial learning, and we believe that the deterministic policy is sufficient given the clear depth map and the static environment. However, we should be aware that if the environment has more dynamics (e.g., moving obstacles) or if the depth map is noisy, SAC might be more robust. We will proceed with TD3 and monitor the training. If we find that the drone is not exploring enough or gets stuck in suboptimal behaviors, we might reconsider SAC.
 
 ### Expected Performance (NEED TO DO MORE RESEARCH):
