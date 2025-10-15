@@ -102,3 +102,7 @@ Additionally, TD3 uses delayed policy updates, which means the policy is updated
 * Navigation Accuracy: ??
 * Collision Avoidance: ??
 * Training Stability: Consistent learning curve?
+
+
+## Reference:
+1. A Method for Accelerated Simulations of Reinforcement Learning Tasks of UAVs in AirSim, Alberto Musa, etc., 2022/05/17, https://personales.upv.es/thinkmind/dl/conferences/simul/simul_2022/simul_2022_1_90_50041.pdf, DOI  - 10.1145/3528416.3530865
