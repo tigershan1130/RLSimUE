@@ -81,6 +81,11 @@ Base on [1] paper, The full pipeline of the RL setup. The blue box is the simula
 
 ### Training Pipeline 
 
+### TODO(NEED TO DO MORE RESEARCH):
+* Modules(RL Policy Module)
+* Depth map feature extractor module(Down dimension), based on paper[2], they use VAE for this then pass into RL policy module
+* Other vector states(excluding depth map information), normalization process to prevent exploding gradient.
+
 
 
 ## Why TD3 Algorithm?
