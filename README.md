@@ -135,7 +135,12 @@ We are thinking about TD3+CNN or SAC+VAE.
 * Collision Avoidance: ??
 * Training Stability: Consistent learning curve?
 
+Success Rate: The percentage of agent that successfully reach their corresponding target position without collisions within a specified number of time steps.
+Average Speed: The average speed of all UAVs during testing, obtained from the average speed of each episode.
+Extra Distance: The average additional distance traveled by UAVs relative to the straight-line distance between the initial and goal positions.
 
+What are we comparing to? Some other algorithms?
+ 
 ## Reference:
 1. Alberto Musa, etc.,"A Method for Accelerated Simulations of Reinforcement Learning Tasks of UAVs in AirSim", 2022/05/17, https://personales.upv.es/thinkmind/dl/conferences/simul/simul_2022/simul_2022_1_90_50041.pdf, DOI  - 10.1145/3528416.3530865
 2. Jeremy Roghair, Kyungtae Ko, Amir Ehsan Niaraki Asli, Ali Jannesari. "A Vision Based Deep Reinforcement Learning Algorithm for UAV Obstacle Avoidance." arXiv preprint arXiv:2103.06403 (2021), https://arxiv.org/pdf/2103.06403
