@@ -102,6 +102,16 @@ The overestimation bias in DDPG arises because the same network is used to selec
 TD3 addresses the overestimation bias of DDPG by introducing two critic networks (twin) and taking the minimum of their Q-values for the target. This reduces overestimation and leads to more stable training.
 Additionally, TD3 uses delayed policy updates, which means the policy is updated less frequently than the critics. It can also use replay buffer for simlar temporal storage from training. The momentum and dynamics handling would be better.
 
+### Comparison between TD3 and D3QN
+Both are Duel Actor-Critic model, D3QN is mentioned in paper[2]. 
+
+But in Our Experiment, we decided to go with TD3 becaues of the following expected reasons:
+* Continuous action space matches physical drone control requirements
+* Actor-critic architecture handles complex state spaces more effectively
+* Training stability ensures reliable learning progression
+* Sample efficiency reduces training time and computational cost
+* Smooth control outputs prevent oscillatory and jerky flight behavio
+
 ### Expected Performance
 * Navigation Accuracy: ??
 * Collision Avoidance: ??
