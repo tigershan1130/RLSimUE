@@ -122,7 +122,7 @@ We are thinking about TD3+CNN or SAC+VAE.
 
 3. Handling Uncertainty: Our environment is partially observable.
   - SAC's stochastic policy may be better at handling uncertainty because it can learn to take a variety of actions in the same state (non-deterministic).
-  - TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties.
+  - TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties. (Get Stuck circling around)
 
 #### Conclusion:
   SAC + VAE(Decided): Allows for a two-stage training process. First, train the VAE on depth images (offline). Then, train SAC using the compressed latent vectors. This separation simplifies debugging and can lead to faster initial results, The paper from [2][3] gives pretty good results using SAC+VAE
