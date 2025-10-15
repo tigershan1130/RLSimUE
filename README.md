@@ -1,14 +1,14 @@
-﻿# AirSim TD3 Multirotor Reinforcement Learning
+﻿# AirSim Multirotor Reinforcement Learning
 ![Screenshot](https://private-user-images.githubusercontent.com/39791762/500980081-d10c54f6-a5cc-41cb-85e2-378521e5b7d2.jpg?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NjA0NTA0MjAsIm5iZiI6MTc2MDQ1MDEyMCwicGF0aCI6Ii8zOTc5MTc2Mi81MDA5ODAwODEtZDEwYzU0ZjYtYTVjYy00MWNiLTg1ZTItMzc4NTIxZTViN2QyLmpwZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNTEwMTQlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjUxMDE0VDEzNTUyMFomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPWQwNGZlOThkOTM5ZGQ1ZjdjMzIzNDRhZDRlMDBiZmI1MWRlNzBlNDNjZDRhZDllMmNjNTFlYzRhNGIzODYzZDgmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0In0.YNgyuvdDubxAM9XtqmzSjY4Qqzqe5DEmg1Aau6NEkKQ)
 
 ## Introduction
 A key challenge in UAV autonomy is robust obstacle avoidance in complex environments. Recent research addresses this by leveraging Monocular Depth Estimation (MDE), which enables drones to perceive 3D structure from a single camera, facilitating effective navigation and collision avoidance. A promising approach for UAV obstacle avoidance is to combine the perceptual capabilities of Monocular Depth Estimation (MDE) with the decision-making power of Reinforcement Learning (RL). In this framework, MDE processes a single camera image to generate a real-time depth map, providing a compact representation of the 3D environment. This depth information then serves as the state input for an RL agent, which is trained to learn an optimal navigation policy. Through repeated simulation, the agent learns to map these depth states to the correct flight actions—such as turning, ascending, or slowing down—to efficiently navigate through cluttered spaces while proactively avoiding collisions. This synergy allows the UAV to not just perceive its surroundings but also to learn complex, robust avoidance behaviours directly from experience. In this project, we take a closer look at how to use Microsoft Airsim with RL Agent to allow UAV to perceive its surroundings and learning robust avoidance in complex simulation enviornment such as the Unreal Engine.
 
 ## Project Overview
-This project implements a **Deep Reinforcement Learning (DRL)** system for autonomous drone navigation in Microsoft AirSim using Stable-Baselines3. The drone learns to navigate to randomly generated target points while avoiding collisions using the **Twin Delayed DDPG (TD3)** algorithm with multi-modal observations.
+This project implements a **Deep Reinforcement Learning (DRL)** system for autonomous drone navigation in Microsoft AirSim using Stable-Baselines3. The drone learns to navigate to randomly generated target points while avoiding collisions using the **Soft Actor Crtic (SAC)** algorithm with VAE for multi-modal observations.
 
 
-## 🚀 AirSim TD3 Multirotor Quick Setup Instructions
+## 🚀 AirSim Multirotor Quick Setup Instructions
 
 ### 1. Download and Setup Unreal Engine Executable
 - Download the latest release of Unreal Engine executable
