@@ -115,7 +115,7 @@ Both are Duel Actor-Critic model, D3QN is mentioned in paper[2]. But in Our Expe
 * Sample efficiency reduces training time and computational cost
 * Smooth control outputs prevent oscillatory and jerky flight behavio
 
-### Expected Performance
+### Expected Performance (NEED TO DO MORE RESEARCH):
 * Navigation Accuracy: ??
 * Collision Avoidance: ??
 * Training Stability: Consistent learning curve?
