@@ -86,8 +86,6 @@ Base on [1] paper, The full pipeline of the RL setup. The blue box is the simula
 * Depth map feature extractor module(Down dimension), based on paper[2], they use VAE for this then pass into RL policy module
 * Other vector states(excluding depth map information), normalization process to prevent exploding gradient.
 
-
-
 ## Why TD3 Algorithm?
 
 ### Advantages for Drone Navigation
@@ -113,7 +111,27 @@ Both are Duel Actor-Critic model, D3QN is mentioned in paper[2]. But in Our Expe
 * Actor-critic architecture handles complex state spaces more effectively
 * Training stability ensures reliable learning progression
 * Sample efficiency reduces training time and computational cost
-* Smooth control outputs prevent oscillatory and jerky flight behavio
+* Smooth control outputs prevent oscillatory and jerky flight behaviour
+
+## Comparison between TD3 and SAC(We are still consdering)
+* Algorithmic Differences:
+** TD3 (Twin Delayed Deep Deterministic Policy Gradient):
+Deterministic policy (outputs exact action)
+Uses twin Q-networks to reduce overestimation bias, delayed policy updates, and target policy smoothing.
+
+** SAC (Soft Actor-Critic):
+Stochastic policy (outputs a distribution over actions) with entropy regularization.
+Maximizes both expected return and entropy, which encourages exploration.
+
+
+* Exploration:
+** TD3: Explores by adding noise to the actions (e.g., Gaussian noise). The policy itself is deterministic.
+** SAC: The stochastic policy naturally explores, and the entropy term encourages trying new actions.
+
+* Handling Uncertainty: Our environment is partially observable.
+** SAC's stochastic policy may be better at handling uncertainty because it can learn to take a variety of actions in the same state (non-deterministic).
+** TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties.
+
 
 ### Expected Performance (NEED TO DO MORE RESEARCH):
 * Navigation Accuracy: ??
@@ -124,3 +142,4 @@ Both are Duel Actor-Critic model, D3QN is mentioned in paper[2]. But in Our Expe
 ## Reference:
 1. Alberto Musa, etc.,"A Method for Accelerated Simulations of Reinforcement Learning Tasks of UAVs in AirSim", 2022/05/17, https://personales.upv.es/thinkmind/dl/conferences/simul/simul_2022/simul_2022_1_90_50041.pdf, DOI  - 10.1145/3528416.3530865
 2. Jeremy Roghair, Kyungtae Ko, Amir Ehsan Niaraki Asli, Ali Jannesari. "A Vision Based Deep Reinforcement Learning Algorithm for UAV Obstacle Avoidance." arXiv preprint arXiv:2103.06403 (2021), https://arxiv.org/pdf/2103.06403
+3. Zhihan Xue, Tad Gonsalves., "Vision Based Drone Obstacle Avoidance by Deep Reinforcement Learning", DOI:10.3390/ai2030023, August 2021, https://www.researchgate.net/publication/354017223_Vision_Based_Drone_Obstacle_Avoidance_by_Deep_Reinforcement_Learning
