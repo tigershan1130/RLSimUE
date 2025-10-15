@@ -86,11 +86,11 @@ Base on [1] paper, The full pipeline of the RL setup. The blue box is the simula
 * Depth map feature extractor module(Down dimension), based on paper[2], they use VAE for this then pass into RL policy module
 * Other vector states(excluding depth map information), normalization process to prevent exploding gradient.
 
-## Why TD3 Algorithm?
+## Why SAC Algorithm?
 
 ### Advantages for Drone Navigation
 * PPO (Proximal Policy Optimization):
-PPO is an on-policy algorithm, meaning it discards data after each update. This leads to lower sample efficiency compared to off-policy methods like TD3.
+PPO is an on-policy algorithm, meaning it discards data after each update. This leads to lower sample efficiency compared to off-policy methods like SAC.
 In robotics tasks, where data collection can be time-consuming and expensive, sample efficiency is crucial.
 PPO typically requires more interactions with the environment to converge, which can be slow in a high-fidelity simulation like AirSim.
 
@@ -101,19 +101,14 @@ DQN is designed for discrete action spaces. Our drone control task requires cont
 DDPG is an actor-critic method for continuous control. However, it is known to be prone to overestimating Q-values, which can lead to unstable training and suboptimal policies.
 The overestimation bias in DDPG arises because the same network is used to select and evaluate the next action. This can be particularly problematic in environments with high-dimensional observation spaces and complex dynamics, such as drone navigation.
 
-* TD3 (Twin Delayed DDPG)(We decided to use):
+* TD3 (Twin Delayed DDPG):
 TD3 addresses the overestimation bias of DDPG by introducing two critic networks (twin) and taking the minimum of their Q-values for the target. This reduces overestimation and leads to more stable training.
 Additionally, TD3 uses delayed policy updates, which means the policy is updated less frequently than the critics. It can also use replay buffer for simlar temporal storage from training. The momentum and dynamics handling would be better.
 
-### Comparison between TD3 and D3QN
-Both are Duel Actor-Critic model, D3QN is mentioned in paper[2]. But in Our Experiment, we decided to go with TD3 becaues of the following expected reasons:
-* Continuous action space matches physical drone control requirements
-* Actor-critic architecture handles complex state spaces more effectively
-* Training stability ensures reliable learning progression
-* Sample efficiency reduces training time and computational cost
-* Smooth control outputs prevent oscillatory and jerky flight behaviour
+* SAC (Soft Actor-Critic):
+SAC combines the best of both worlds: the sample efficiency of off-policy methods with the exploration benefits of stochastic policies. The entropy regularization encourages exploration without the need for explicit noise injection.
 
-### Comparison between TD3 and SAC(We are still consdering)
+### Comparison between TD3 and SAC
 We are comparing TD3 and SAC for our drone navigation task. We have a multi-modal observation space (depth image and vector states) and a continuous action space.
 We are thinking about TD3+CNN or SAC+VAE.
 
@@ -130,7 +125,8 @@ We are thinking about TD3+CNN or SAC+VAE.
   - TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties.
 
 #### Conclusion:
-  We choose TD3 for its simplicity and faster initial learning, and we believe that the deterministic policy is sufficient given the clear depth map and the static environment. However, we should be aware that if the environment has more dynamics (e.g., moving obstacles) or if the depth map is noisy, SAC might be more robust. We will proceed with TD3 and monitor the training. If we find that the drone is not exploring enough or gets stuck in suboptimal behaviors, we might reconsider SAC.
+  SAC + VAE: Allows for a two-stage training process. First, train the VAE on depth images (offline). Then, train SAC using the compressed latent vectors. This separation simplifies debugging and can lead to faster initial results, The paper from [2][3] gives pretty good results using SAC+VAE
+  TD3 + CNN: Requires end-to-end training, where the CNN and policy must learn simultaneously. This can be slower and more challenging to debug.
 
 ### Expected Performance (NEED TO DO MORE RESEARCH):
 * Navigation Accuracy: ??
