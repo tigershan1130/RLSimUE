@@ -125,7 +125,7 @@ We are thinking about TD3+CNN or SAC+VAE.
   - TD3's deterministic policy might be more prone to getting stuck in a single behavior, which might not be robust to uncertainties.
 
 #### Conclusion:
-  SAC + VAE: Allows for a two-stage training process. First, train the VAE on depth images (offline). Then, train SAC using the compressed latent vectors. This separation simplifies debugging and can lead to faster initial results, The paper from [2][3] gives pretty good results using SAC+VAE
+  SAC + VAE(Decided): Allows for a two-stage training process. First, train the VAE on depth images (offline). Then, train SAC using the compressed latent vectors. This separation simplifies debugging and can lead to faster initial results, The paper from [2][3] gives pretty good results using SAC+VAE
   TD3 + CNN: Requires end-to-end training, where the CNN and policy must learn simultaneously. This can be slower and more challenging to debug.
 
 ### Expected Performance (NEED TO DO MORE RESEARCH):
