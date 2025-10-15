@@ -107,4 +107,5 @@ Additionally, TD3 uses delayed policy updates, which means the policy is updated
 
 
 ## Reference:
-1. A Method for Accelerated Simulations of Reinforcement Learning Tasks of UAVs in AirSim, Alberto Musa, etc., 2022/05/17, https://personales.upv.es/thinkmind/dl/conferences/simul/simul_2022/simul_2022_1_90_50041.pdf, DOI  - 10.1145/3528416.3530865
+1. Alberto Musa, etc.,"A Method for Accelerated Simulations of Reinforcement Learning Tasks of UAVs in AirSim", 2022/05/17, https://personales.upv.es/thinkmind/dl/conferences/simul/simul_2022/simul_2022_1_90_50041.pdf, DOI  - 10.1145/3528416.3530865
+2. Jeremy Roghair, Kyungtae Ko, Amir Ehsan Niaraki Asli, Ali Jannesari. "A Vision Based Deep Reinforcement Learning Algorithm for UAV Obstacle Avoidance." arXiv preprint arXiv:2103.06403 (2021), https://arxiv.org/pdf/2103.06403
