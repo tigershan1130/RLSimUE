@@ -11,7 +11,7 @@ This project implements a **Deep Reinforcement Learning (DRL)** system for auton
 ## 🚀 AirSim Multirotor Quick Setup Instructions
 
 ### 1. Download and Setup Unreal Engine Executable
-- Download the latest release of Unreal Engine executable
+- Download the latest release of our current project(executable on the right side of release page)
 - Ensure the executable is properly installed and configured
 
 ### 2. Configure AirSim Settings
