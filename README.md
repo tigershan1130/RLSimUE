@@ -61,6 +61,10 @@ python train_agent.py
 #or test airsim with python troubleShootAirsim.py
 ```
 
+### 5. Trouble Shoot: 
+We have running into problem of getting python enviornment running with airsim:
+https://github.com/microsoft/AirSim/issues/4920
+You can look modify the setup.py following this link and rerun the setup.py and everything should be up and running.
 
 ## :biohazard: Methodology
 
