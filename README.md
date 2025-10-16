@@ -49,8 +49,8 @@ pip install -r requirements.txt
 
 ### 4. Launch Project
 
-#### Start Unreal Engine
-- Launch your Unreal Engine executable with the AirSim environment
+#### Start Our excutable.
+- Launch our executable MultiRotor demo with the AirSim environment
 
 #### Run Python Training
 Navigate to the project directory and start the training script:
