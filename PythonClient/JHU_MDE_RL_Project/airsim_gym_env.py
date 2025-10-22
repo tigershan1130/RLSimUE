@@ -210,6 +210,44 @@ class AirSimMultirotorEnv(gym.Env):
         depth_img = depth_img.reshape(response.height, response.width)
         return depth_img
     
+    def _get_rgb_image(self):
+        """Capture standard rgb pixels from airsim"""
+        try:
+            responses = self.client.simGetImages([
+                airsim.ImageRequest(
+                    self.camera_name, 
+                    airsim.ImageType.Scene,
+                    pixels_as_float=False, 
+                    compress=False
+                )
+            ])
+            
+            if responses and responses[0]:
+                pixel_array = self._parse_image_response(responses[0])
+                return pixel_array
+                '''
+                pixels_resized = cv2.resize(
+                    pixel_array, 
+                    self.depth_image_size, 
+                    interpolation=cv2.INTER_AREA
+                )
+                pixels_normalized = np.clip(pixels_resized / 256.0, 0.0, 1.0)
+                pixels_normalized = np.expand_dims(pixels_normalized, axis=-1)
+                return pixels_normalized'''
+            else:
+                return np.zeros((self.depth_image_size[0], self.depth_image_size[1], 1), dtype=np.float32)
+                
+        except Exception as e:
+            print(f"Error getting depth image: {e}")
+            return np.zeros((self.depth_image_size[0], self.depth_image_size[1], 1), dtype=np.float32)
+        
+    def _parse_image_response(self, response:airsim.ImageResponse):
+        """Parse AirSim depth image response"""
+
+        img = np.frombuffer(response.image_data_uint8, dtype=np.uint8)
+        img = img.reshape(response.height, response.width, 3)
+        return img
+    
     def _has_collided(self):
         """Check if drone has collided"""
         collision_info = self.client.simGetCollisionInfo()
