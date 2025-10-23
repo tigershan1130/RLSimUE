@@ -5,6 +5,7 @@ from enhancedFeatureExtractor import EnhancedFeatureExtractor
 from airsim_gym_env import AirSimMultirotorEnv
 import torch
 from PIL import Image
+import time
 
 class EnhancedTrainingCallback(BaseCallback):
     def __init__(self, check_freq=1000, verbose=1):
@@ -33,14 +34,37 @@ class EnhancedTrainingCallback(BaseCallback):
 print("Initialize AirSimMultirotorEnv...")
 env = AirSimMultirotorEnv(depth_image_size=(84, 84))
 
-# get example rgb image and run through depth anything model
-pixels = env._get_rgb_image()
-image = Image.fromarray(pixels)
-depths = env._get_mde()
-depth_image = Image.fromarray(depths)
-image.show()
-depth_image.show()
+'''
+# code to get snapshots from airsim environment (using car)
 
+import airsim
+client = airsim.CarClient()
+# car_controls = airsim.CarControls()
+# car_controls.throttle = 1
+# client.setCarControls(car_controls)
+client.enableApiControl(False)
+cur = time.time()
+for i in range(100):
+    # get example rgb image and run through depth anything model
+    pixels = env._get_rgb_image()
+    image = Image.fromarray(pixels)
+    depths = env._get_mde()
+    depth_image = Image.fromarray(depths)
+    ground_truth = env._get_depth_image2()
+    ground_truth_image = Image.fromarray(ground_truth)
+    ground_truth_image = ground_truth_image.convert("L")
+    #image.show()
+    #depth_image.show()
+    #ground_truth_image.show()
+
+    fp = "C:\\Users\\remei\\OneDrive\\Documents\\JHU\\Classes\\08 Deep Learning\\Group Project\\Snapshots"
+    image.save(f"{fp}\\rbg_{cur}_{i}.jpg")
+    depth_image.save(f"{fp}\\mde_{cur}_{i}.jpg")
+    ground_truth_image.save(f"{fp}\\gt_{cur}_{i}.jpg")
+
+    car_state = client.getCarState()
+    print("Speed %d, Gear %d" % (car_state.speed, car_state.gear))
+    time.sleep(1)'''
 
 print("Initialize TD3 model...")
 

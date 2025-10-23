@@ -253,6 +253,25 @@ class AirSimMultirotorEnv(gym.Env):
         img = img.reshape(response.height, response.width, 3)
         return img
     
+    def _get_depth_image2(self):
+        """Capture standard rgb pixels from airsim"""
+        try:
+            responses = self.client.simGetImages([
+                airsim.ImageRequest(
+                    self.camera_name, 
+                    airsim.ImageType.DepthPerspective,
+                    pixels_as_float=True, 
+                    compress=False
+                )
+            ])
+            test = responses[0]
+            if responses and responses[0]:
+                pixel_array = airsim.list_to_2d_float_array(responses[0].image_data_float, responses[0].width, responses[0].height)
+                return pixel_array
+            
+        except Exception as e:
+            print(e)
+    
     def _get_mde(self) -> np.ndarray:
         pixels = self._get_rgb_image()
         image = Image.fromarray(pixels)
