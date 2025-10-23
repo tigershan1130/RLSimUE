@@ -24,6 +24,7 @@ Packaged/
 /Intermediate
 /PythonClient/airsim/__pycache__
 /PythonClient/venv
+/PythonClient/airsim_env
 /Saved
 /Plugins/AirSim/Binaries
 /Plugins/AirSim/Intermediate

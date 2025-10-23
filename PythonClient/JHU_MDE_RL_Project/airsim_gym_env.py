@@ -7,6 +7,8 @@ import random
 import cv2
 from PIL import Image
 import io
+from transformers import pipeline
+import transformers
 
 class AirSimMultirotorEnv(gym.Env):
     def __init__(self, target_radius=500.0, depth_image_size=(84, 84)):
@@ -77,6 +79,9 @@ class AirSimMultirotorEnv(gym.Env):
                 dtype=np.float32
             )
         })
+
+        print("setting up depth-anything v2 pipeline..")
+        self.mde:transformers.DepthEstimationPipeline = pipeline(task="depth-estimation", model="depth-anything/Depth-Anything-V2-Small-hf")
         
         
     def _setup_depth_camera(self):
@@ -247,6 +252,13 @@ class AirSimMultirotorEnv(gym.Env):
         img = np.frombuffer(response.image_data_uint8, dtype=np.uint8)
         img = img.reshape(response.height, response.width, 3)
         return img
+    
+    def _get_mde(self):
+        pixels = self._get_rgb_image()
+        image = Image.fromarray(pixels)
+        depth:Image.Image = self.mde(image)["depth"]
+        depths = np.asarray(depth)
+        return depths
     
     def _has_collided(self):
         """Check if drone has collided"""
