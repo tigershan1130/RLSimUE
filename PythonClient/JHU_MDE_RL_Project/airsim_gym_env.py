@@ -253,7 +253,7 @@ class AirSimMultirotorEnv(gym.Env):
         img = img.reshape(response.height, response.width, 3)
         return img
     
-    def _get_mde(self):
+    def _get_mde(self) -> np.ndarray:
         pixels = self._get_rgb_image()
         image = Image.fromarray(pixels)
         depth:Image.Image = self.mde(image)["depth"]
