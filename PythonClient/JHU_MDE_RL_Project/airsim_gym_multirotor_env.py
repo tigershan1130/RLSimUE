@@ -80,6 +80,7 @@ class DroneObstacleEnv(gym.Env):
             self.max_vertical_speed * 1.5
         ])
 
+    # Helper method to load pre-trained VAE model
     def _load_vae(self, model_path: str):
         """Load pre-trained VAE model"""
         from vae_model import VAE
@@ -89,6 +90,7 @@ class DroneObstacleEnv(gym.Env):
         vae.eval()
         return vae
 
+    # Gymnasium reset function
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         """Reset the environment to initial state"""
         super().reset(seed=seed)
@@ -105,11 +107,15 @@ class DroneObstacleEnv(gym.Env):
         self.current_step = 0
         self.previous_normalized_distance = None
         
+        # Draw target visualization
+        self._draw_target_visualization()
+        
         observation = self._get_observation()
         info = {}
         
         return observation, info
 
+    # Gymnasium step function
     def step(self, action: np.ndarray):
         """Execute one environment step"""
         self.current_step += 1
@@ -130,6 +136,7 @@ class DroneObstacleEnv(gym.Env):
         
         return observation, reward, terminated, truncated, info
 
+    # Helper method to execute action
     def _execute_action(self, action: np.ndarray):
         """Convert simplified action to AirSim command"""
         speed_factor, lateral, vertical = action
@@ -151,6 +158,7 @@ class DroneObstacleEnv(gym.Env):
         # Wait for action to complete
         airsim.time.sleep(self.dt)
 
+    # Helper method to get observation
     def _get_observation(self) -> np.ndarray:
         """Get current observation with relative distance"""
         # Get drone state
@@ -189,6 +197,9 @@ class DroneObstacleEnv(gym.Env):
         normalized_velocity = np.clip(normalized_velocity, -1.0, 1.0)
         
         # VAE latent is already normalized by the encoder
+        
+        # Update the drone-to-target line visualization
+        self._update_drone_to_target_line(position)
         
         # Combine observations (38D total)
         observation = np.concatenate([
@@ -378,7 +389,75 @@ class DroneObstacleEnv(gym.Env):
             kinematics.position.z_val
         ])
 
+    # Visualization methods
+    def _draw_target_visualization(self):
+        """Draw the target point in 3D space"""
+        # Clear any previous persistent markers
+        self.client.simFlushPersistentMarkers()
+        
+        # Create target point as a red sphere
+        target_point = airsim.Vector3r(
+            self.target_position[0],
+            self.target_position[1], 
+            self.target_position[2]
+        )
+        
+        # Draw the target as a persistent red sphere
+        self.client.simPlotPoints(
+            points=[target_point],
+            color_rgba=[1.0, 0.0, 0.0, 1.0],  # Red, fully opaque
+            size=25.0,  # Larger size for visibility
+            duration=-1,  # Persistent (-1 means forever)
+            is_persistent=True
+        )
+        
+        # Also draw a text label at the target
+        self.client.simPlotStrings(
+            strings=["TARGET"],
+            positions=[target_point],
+            scale=2.0,
+            color_rgba=[1.0, 0.0, 0.0, 1.0],
+            duration=-1
+        )
+        
+        print(f"Target visualization drawn at: {self.target_position}")
+
+    def _update_drone_to_target_line(self, drone_position: np.ndarray):
+        """Draw a line between current drone position and target point"""
+        # Convert positions to AirSim Vector3r
+        drone_point = airsim.Vector3r(
+            drone_position[0],
+            drone_position[1],
+            drone_position[2]
+        )
+        
+        target_point = airsim.Vector3r(
+            self.target_position[0],
+            self.target_position[1],
+            self.target_position[2]
+        )
+        
+        # Draw line from drone to target (green, semi-transparent)
+        self.client.simPlotLineList(
+            points=[drone_point, target_point],
+            color_rgba=[0.0, 1.0, 0.0, 0.7],  # Green, semi-transparent
+            thickness=3.0,
+            duration=0.2,  # Temporary - will be updated next step
+            is_persistent=False
+        )
+        
+        # Optional: Draw drone position as a blue point
+        self.client.simPlotPoints(
+            points=[drone_point],
+            color_rgba=[0.0, 0.0, 1.0, 0.5],  # Blue, semi-transparent
+            size=10.0,
+            duration=0.2,  # Temporary
+            is_persistent=False
+        )
+
     def close(self):
         """Clean up environment"""
+        # Clear all visualizations
+        self.client.simFlushPersistentMarkers()
         self.client.armDisarm(False)
         self.client.enableApiControl(False)
