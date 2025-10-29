@@ -10,6 +10,8 @@ import cv2
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import os
+from datetime import datetime
 
 class DroneObstacleEnv(gym.Env):
     """
@@ -59,8 +61,8 @@ class DroneObstacleEnv(gym.Env):
         self.max_vertical_speed = 2.0    # m/s
         
         # Reward function parameters
-        self.progress_scale = 10.0
-        self.obstacle_k = 2.0
+        self.progress_scale = 50.0
+        self.obstacle_k = 3.0
         self.previous_normalized_distance = None
         
         # Timer reward parameters
@@ -107,7 +109,31 @@ class DroneObstacleEnv(gym.Env):
         self.observation_thread = None
         
         # Observation collection interval 0.2, but simulation runs at x2 clock speed
-        self.observation_interval = 0.2  
+        self.observation_interval = 0.2
+        
+        # Setup logging to file
+        self.log_file = None
+        self._setup_logging()  
+
+    def _setup_logging(self):
+        """Setup logging to file"""
+        # Create eval_logs directory if it doesn't exist
+        log_dir = os.path.join(os.path.dirname(__file__), "eval_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Create log file with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file_path = os.path.join(log_dir, f"training_log_{timestamp}.txt")
+        
+        self.log_file = open(log_file_path, 'w', encoding='utf-8')
+        self.log(f"=== Training Log Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+    
+    def log(self, message: str):
+        """Log message to both console and file"""
+        print(message, end='')
+        if self.log_file:
+            self.log_file.write(message)
+            self.log_file.flush()  # Ensure it's written immediately
 
     # Helper method to load pre-trained VAE model
     def _load_vae(self, model_path: str):
@@ -327,60 +353,61 @@ class DroneObstacleEnv(gym.Env):
         max_step_time = np.max(self.episode_step_times)
         min_step_time = np.min(self.episode_step_times)
         
-        print(f"\n=== TIMING DIAGNOSTICS (Step {self.current_step}) ===")
-        print(f"Step Time: avg={avg_step_time:.3f}s, min={min_step_time:.3f}s, max={max_step_time:.3f}s")
-        print(f"Steps per second: {1/avg_step_time:.1f}")
+        self.log(f"\n=== TIMING DIAGNOSTICS (Step {self.current_step}) ===\n")
+        self.log(f"Step Time: avg={avg_step_time:.3f}s, min={min_step_time:.3f}s, max={max_step_time:.3f}s\n")
+        self.log(f"Steps per second: {1/avg_step_time:.1f}\n")
         
         # Component breakdown
-        print("Component Times:")
+        self.log("Component Times:\n")
         for component, times in self.component_times.items():
             if times:
                 avg_time = np.mean(times)
                 total_time = np.sum(times)
                 percentage = (total_time / np.sum(self.episode_step_times)) * 100
-                print(f"  {component}: {avg_time:.3f}s avg ({percentage:.1f}%)")
+                self.log(f"  {component}: {avg_time:.3f}s avg ({percentage:.1f}%)\n")
         
         # Calculate parallel efficiency
-        sequential_estimate = (np.mean(self.component_times['simulation_sleep']) + 
-                             np.mean(self.component_times['vae_encoding']) +
-                             np.mean(self.component_times['image_processing']))
-        parallel_actual = avg_step_time
-        if sequential_estimate > 0:
-            efficiency_gain = (sequential_estimate - parallel_actual) / sequential_estimate * 100
-            print(f"Parallel efficiency gain: {efficiency_gain:.1f}%")
+        if self.component_times.get('simulation_sleep') and self.component_times.get('vae_encoding') and self.component_times.get('image_processing'):
+            sequential_estimate = (np.mean(self.component_times['simulation_sleep']) + 
+                                 np.mean(self.component_times['vae_encoding']) +
+                                 np.mean(self.component_times['image_processing']))
+            parallel_actual = avg_step_time
+            if sequential_estimate > 0:
+                efficiency_gain = (sequential_estimate - parallel_actual) / sequential_estimate * 100
+                self.log(f"Parallel efficiency gain: {efficiency_gain:.1f}%\n")
         
         # Memory usage (if available)
         try:
             import psutil
             process = psutil.Process()
             memory_mb = process.memory_info().rss / 1024 / 1024
-            print(f"Memory Usage: {memory_mb:.1f} MB")
+            self.log(f"Memory Usage: {memory_mb:.1f} MB\n")
         except ImportError:
             pass
             
-        print("===")
+        self.log("===\n")
 
     def _log_episode_summary(self, terminated: bool, truncated: bool):
         """Log comprehensive episode summary"""
         episode_duration = time.time() - self.episode_start_time
         
-        print(f"\nEPISODE SUMMARY ")
-        print(f"Result: {'SUCCESS' if terminated else 'TIME LIMIT' if truncated else 'UNKNOWN'}")
-        print(f"Total Steps: {self.current_step}")
-        print(f"Episode Duration: {episode_duration:.2f}s")
-        print(f"Average Step Time: {np.mean(self.episode_step_times):.3f}s")
-        print(f"Steps per Second: {len(self.episode_step_times)/episode_duration:.1f}")
+        self.log(f"\nEPISODE SUMMARY\n")
+        self.log(f"Result: {'SUCCESS' if terminated else 'TIME LIMIT' if truncated else 'UNKNOWN'}\n")
+        self.log(f"Total Steps: {self.current_step}\n")
+        self.log(f"Episode Duration: {episode_duration:.2f}s\n")
+        self.log(f"Average Step Time: {np.mean(self.episode_step_times):.3f}s\n")
+        self.log(f"Steps per Second: {len(self.episode_step_times)/episode_duration:.1f}\n")
         
         # Performance metrics
         if len(self.step_times) >= 100:
             recent_avg = np.mean(self.step_times[-100:])
             overall_avg = np.mean(self.step_times)
-            print(f"Recent 100-step avg: {recent_avg:.3f}s")
-            print(f"Overall avg step time: {overall_avg:.3f}s")
+            self.log(f"Recent 100-step avg: {recent_avg:.3f}s\n")
+            self.log(f"Overall avg step time: {overall_avg:.3f}s\n")
             
             # Estimate training speed
             steps_per_hour = 3600 / recent_avg
-            print(f"Estimated training speed: {steps_per_hour:.0f} steps/hour")
+            self.log(f"Estimated training speed: {steps_per_hour:.0f} steps/hour\n")
 
     def _get_observation(self) -> np.ndarray:
         """Get current observation without executing action (used in reset, thread-safe)"""
@@ -537,11 +564,11 @@ class DroneObstacleEnv(gym.Env):
 
     def _log_reward_breakdown(self, reward_breakdown: dict, total_reward: float):
         """Log detailed reward breakdown"""
-        print(f"\n--- REWARD BREAKDOWN (Step {self.current_step}) ---")
-        print(f"Total Reward: {total_reward:.3f}")
+        self.log(f"\n--- REWARD BREAKDOWN (Step {self.current_step}) ---\n")
+        self.log(f"Total Reward: {total_reward:.3f}\n")
         for component, value in reward_breakdown.items():
-            print(f"  {component}: {value:.3f}")
-        print("---")
+            self.log(f"  {component}: {value:.3f}\n")
+        self.log("---\n")
 
     def _calculate_progress_reward(self, normalized_relative_distance: np.ndarray) -> float:
         """Calculate progress toward target using normalized relative distance"""
@@ -660,7 +687,7 @@ class DroneObstacleEnv(gym.Env):
                 duration=-1
             )
         
-        print(f"Target visualization drawn at: {self.target_position}")
+        self.log(f"Target visualization drawn at: {self.target_position}\n")
 
     def _update_drone_to_target_line(self, drone_position: np.ndarray):
         """Draw a line between current drone position and target point (thread-safe)"""
@@ -694,6 +721,12 @@ class DroneObstacleEnv(gym.Env):
         
         # Shutdown thread pool
         self.thread_pool.shutdown(wait=True)
+        
+        # Log closing
+        if self.log_file:
+            self.log(f"\n=== Training Log Ended at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            self.log_file.close()
+            self.log_file = None
         
         # All cleanup operations (thread-safe)
         with self.client_lock:

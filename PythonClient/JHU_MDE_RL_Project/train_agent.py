@@ -2,6 +2,7 @@
 import os
 import numpy as np
 import time
+import glob
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, BaseCallback
@@ -11,13 +12,19 @@ import torch
 
 class TrainingCallback(BaseCallback):
     """Simple callback for tracking training progress with debug info"""
-    def __init__(self, check_freq: int = 1000, debug_freq: int = 50, verbose: int = 1):
+    def __init__(self, check_freq: int = 1000, debug_freq: int = 50, 
+                 save_episode_freq: int = 20, save_path: str = "./checkpoints/", verbose: int = 1):
         super(TrainingCallback, self).__init__(verbose)
         self.check_freq = check_freq
         self.debug_freq = debug_freq
+        self.save_episode_freq = save_episode_freq
+        self.save_path = save_path
         self.episode_rewards = []
         self.current_episode_reward = 0
         self.episode_count = 0
+        
+        # Ensure save directory exists
+        os.makedirs(self.save_path, exist_ok=True)
 
     def _on_step(self) -> bool:
         # Track episode rewards
@@ -39,6 +46,17 @@ class TrainingCallback(BaseCallback):
             if len(self.model.env.get_attr('current_step')) > 0:
                 print(f"Steps: {self.model.env.get_attr('current_step')[0]}")
             print(f"Success: {self.current_episode_reward > 0}")
+            
+            # Save model every N episodes
+            if self.episode_count % self.save_episode_freq == 0:
+                episode_model_path = os.path.join(self.save_path, f"episode_{self.episode_count}_model")
+                self.model.save(episode_model_path)
+                print(f"\nModel saved at episode {self.episode_count}: {episode_model_path}")
+                
+                # Also save as "latest" for easy resuming
+                latest_model_path = os.path.join(self.save_path, "latest_model")
+                self.model.save(latest_model_path)
+                print(f"Latest model updated: {latest_model_path}")
             
             if self.episode_count % 10 == 0:
                 mean_reward = np.mean(self.episode_rewards[-10:])
@@ -107,7 +125,33 @@ class TrainingCallback(BaseCallback):
         except Exception as e:
             print(f"Debug logging error: {e}")
 
-def setup_training():
+def find_latest_checkpoint(checkpoint_dir: str = "./checkpoints/"):
+    """Find the latest checkpoint model to resume training from"""
+    # First check for "latest_model"
+    latest_model_path = os.path.join(checkpoint_dir, "latest_model.zip")
+    if os.path.exists(latest_model_path):
+        # Find the episode number from the most recent episode model
+        episode_models = glob.glob(os.path.join(checkpoint_dir, "episode_*_model.zip"))
+        if episode_models:
+            # Extract episode numbers and find the max
+            episode_numbers = []
+            for model_path in episode_models:
+                try:
+                    # Extract episode number from filename like "episode_20_model.zip"
+                    filename = os.path.basename(model_path)
+                    episode_num = int(filename.split("_")[1])
+                    episode_numbers.append((episode_num, model_path))
+                except (ValueError, IndexError):
+                    continue
+            
+            if episode_numbers:
+                # Return the most recent episode model
+                latest_episode, latest_path = max(episode_numbers, key=lambda x: x[0])
+                return latest_path, latest_episode
+    
+    return None, 0
+
+def setup_training(resume_from_checkpoint: bool = True):
     """Setup and train the SAC agent"""
     
     # Environment parameters
@@ -127,38 +171,69 @@ def setup_training():
     env = DummyVecEnv([lambda: Monitor(env)])
     
     # Create directories
-    os.makedirs("./checkpoints", exist_ok=True)
+    checkpoint_dir = "./checkpoints"
+    os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs("./tensorboard_logs", exist_ok=True)
+    
+    # Try to load latest checkpoint
+    model = None
+    starting_episode = 0
+    
+    if resume_from_checkpoint:
+        latest_checkpoint, episode_num = find_latest_checkpoint(checkpoint_dir)
+        if latest_checkpoint and os.path.exists(latest_checkpoint):
+            print(f"\nFound checkpoint: {latest_checkpoint}")
+            print(f"Resuming from episode {episode_num}")
+            try:
+                model = SAC.load(latest_checkpoint, env=env)
+                starting_episode = episode_num
+                print(f"Successfully loaded model from episode {episode_num}")
+            except Exception as e:
+                print(f"Failed to load checkpoint: {e}")
+                print("Starting fresh training...")
+                model = None
+    
+    # If no checkpoint found or loading failed, create new model
+    if model is None:
+        print("\nCreating new model...")
+        model = SAC(
+            "MlpPolicy",
+            env,
+            learning_rate=3e-4,
+            buffer_size=100000,
+            learning_starts=10000,
+            batch_size=256,
+            tau=0.005,
+            gamma=0.99,
+            train_freq=1,
+            gradient_steps=1,
+            ent_coef='auto',
+            policy_kwargs=dict(net_arch=[256, 256]),
+            verbose=1,
+            tensorboard_log="./tensorboard_logs/",
+            seed=42
+        )
     
     # Callbacks
     checkpoint_callback = CheckpointCallback(
         save_freq=10000,
-        save_path="./checkpoints/",
+        save_path=checkpoint_dir,
         name_prefix="drone_sac"
     )
     
-    training_callback = TrainingCallback(check_freq=1000, debug_freq=50)  # Debug every 50 steps
+    # Training callback with episode-based saving (every 20 episodes)
+    training_callback = TrainingCallback(
+        check_freq=1000, 
+        debug_freq=50,
+        save_episode_freq=20,
+        save_path=checkpoint_dir
+    )
+    
+    # Set starting episode count in callback if resuming
+    if starting_episode > 0:
+        training_callback.episode_count = starting_episode
     
     callbacks = [checkpoint_callback, training_callback]
-    
-    # SAC model configuration
-    model = SAC(
-        "MlpPolicy",
-        env,
-        learning_rate=3e-4,
-        buffer_size=100000,
-        learning_starts=10000,
-        batch_size=256,
-        tau=0.005,
-        gamma=0.99,
-        train_freq=1,
-        gradient_steps=1,
-        ent_coef='auto',
-        policy_kwargs=dict(net_arch=[256, 256]),
-        verbose=1,
-        tensorboard_log="./tensorboard_logs/",
-        seed=42
-    )
     
     return model, env, callbacks
 
@@ -217,10 +292,13 @@ def main():
     env = None  # Initialize to None to avoid UnboundLocalError
     
     try:
-        model, env, callbacks = setup_training()
+        # Setup training (will auto-resume from latest checkpoint if available)
+        model, env, callbacks = setup_training(resume_from_checkpoint=True)
         
-        print(f"Training Configuration:")
+        print(f"\nTraining Configuration:")
         print(f"  Target: [50.0, 0.0, -3.0]")
+        print(f"  Checkpoint saving: Every 20 episodes")
+        print(f"  Resume from checkpoint: Enabled")
         
         # Train the model
         print("\nTraining started...")
