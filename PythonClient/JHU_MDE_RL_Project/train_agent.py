@@ -1,102 +1,334 @@
-from stable_baselines3 import TD3
-from stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.callbacks import BaseCallback
-from enhancedFeatureExtractor import EnhancedFeatureExtractor
-from airsim_gym_env import AirSimMultirotorEnv
-import torch
-from PIL import Image
+# train_drone.py
+import os
+import numpy as np
 import time
+import glob
+from stable_baselines3 import SAC
+from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, BaseCallback
+from stable_baselines3.common.monitor import Monitor
+from airsim_gym_multirotor_env import DroneObstacleEnv
+import torch
 
-class EnhancedTrainingCallback(BaseCallback):
-    def __init__(self, check_freq=1000, verbose=1):
-        super(EnhancedTrainingCallback, self).__init__(verbose)
+class TrainingCallback(BaseCallback):
+    """Simple callback for tracking training progress with debug info"""
+    def __init__(self, check_freq: int = 1000, debug_freq: int = 50, 
+                 save_episode_freq: int = 20, save_path: str = "./checkpoints/", verbose: int = 1):
+        super(TrainingCallback, self).__init__(verbose)
         self.check_freq = check_freq
+        self.debug_freq = debug_freq
+        self.save_episode_freq = save_episode_freq
+        self.save_path = save_path
+        self.episode_rewards = []
+        self.current_episode_reward = 0
+        self.episode_count = 0
         
-    def _on_step(self):
-        if self.n_calls % self.check_freq == 0:
-            # Log additional metrics including velocity information
-            infos = self.locals.get('infos', [{}])
-            for info in infos:
-                if 'drone_velocity' in info:
-                    velocity = info['drone_velocity']
-                    speed = np.linalg.norm(velocity)
-                    self.logger.record('custom/speed', speed)
-                    self.logger.record('custom/velocity_x', velocity[0])
-                    self.logger.record('custom/velocity_y', velocity[1])
-                    self.logger.record('custom/velocity_z', velocity[2])
+        # Ensure save directory exists
+        os.makedirs(self.save_path, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        # Track episode rewards
+        current_reward = self.locals['rewards'][0]
+        self.current_episode_reward += current_reward
+        
+        # Debug logging every debug_freq steps
+        if self.n_calls % self.debug_freq == 0:
+            self._log_debug_info(current_reward)
+        
+        # Check if episode ended
+        if self.locals['dones'][0]:
+            self.episode_count += 1
+            self.episode_rewards.append(self.current_episode_reward)
+            
+            # Log episode summary
+            print(f"\n=== EPISODE {self.episode_count} COMPLETED ===")
+            print(f"Total Reward: {self.current_episode_reward:.2f}")
+            if len(self.model.env.get_attr('current_step')) > 0:
+                print(f"Steps: {self.model.env.get_attr('current_step')[0]}")
+            print(f"Success: {self.current_episode_reward > 0}")
+            
+            # Save model every N episodes
+            if self.episode_count % self.save_episode_freq == 0:
+                episode_model_path = os.path.join(self.save_path, f"episode_{self.episode_count}_model")
+                self.model.save(episode_model_path)
+                print(f"\nModel saved at episode {self.episode_count}: {episode_model_path}")
                 
-                if 'target_reached' in info:
-                    self.logger.record('custom/success_rate', float(info['target_reached']))
-                    
+                # Also save as "latest" for easy resuming
+                latest_model_path = os.path.join(self.save_path, "latest_model")
+                self.model.save(latest_model_path)
+                print(f"Latest model updated: {latest_model_path}")
+            
+            if self.episode_count % 10 == 0:
+                mean_reward = np.mean(self.episode_rewards[-10:])
+                print(f"\nEpisode {self.episode_count}, Mean Reward (last 10): {mean_reward:.2f}")
+            
+            self.current_episode_reward = 0
+        
+        # Log every check_freq steps
+        if self.n_calls % self.check_freq == 0:
+            if len(self.episode_rewards) > 0:
+                mean_reward = np.mean(self.episode_rewards[-100:]) if len(self.episode_rewards) >= 100 else np.mean(self.episode_rewards)
+                print(f"\nStep {self.n_calls}, Mean Reward (last 100): {mean_reward:.2f}")
+        
         return True
+    
+    def _log_debug_info(self, current_reward):
+        """Log detailed debug information"""
+        try:
+            # Get environment attributes
+            env = self.model.env.envs[0].env  # Unwrap to get the actual environment
+            
+            # Get current observation
+            obs = self.locals['observations'][0]
+            
+            # Extract components from observation
+            vae_latent = obs[:32]
+            normalized_relative_distance = obs[32:35]
+            normalized_velocity = obs[35:38]
+            
+            # Calculate actual distance magnitude
+            distance_magnitude = np.linalg.norm(normalized_relative_distance)
+            
+            # Get current position
+            position = env._get_current_position()
+            
+            # Get depth map info
+            depth_map = env._get_depth_image()
+            depth_mean = np.mean(depth_map)
+            depth_min = np.min(depth_map)
+            depth_max = np.max(depth_map)
+            
+            print(f"\n--- DEBUG STEP {self.n_calls} ---")
+            print(f"Current Reward: {current_reward:.3f}")
+            print(f"Episode Reward: {self.current_episode_reward:.2f}")
+            print(f"Step in Episode: {env.current_step}")
+            
+            print(f"\nPosition: [{position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f}]")
+            print(f"Target: [{env.target_position[0]:.2f}, {env.target_position[1]:.2f}, {env.target_position[2]:.2f}]")
+            print(f"Normalized Relative Distance: [{normalized_relative_distance[0]:.3f}, {normalized_relative_distance[1]:.3f}, {normalized_relative_distance[2]:.3f}]")
+            print(f"Distance Magnitude: {distance_magnitude:.3f}")
+            
+            print(f"Normalized Velocity: [{normalized_velocity[0]:.3f}, {normalized_velocity[1]:.3f}, {normalized_velocity[2]:.3f}]")
+            
+            print(f"Depth Map - Mean: {depth_mean:.3f}, Min: {depth_min:.3f}, Max: {depth_max:.3f}")
+            
+            # Check collision and bounds
+            collision = env.client.simGetCollisionInfo().has_collided
+            out_of_bounds = env._is_out_of_bounds(position)
+            print(f"Collision: {collision}, Out of Bounds: {out_of_bounds}")
+            
+            # VAE latent stats
+            vae_mean = np.mean(vae_latent)
+            vae_std = np.std(vae_latent)
+            print(f"VAE Latent - Mean: {vae_mean:.3f}, Std: {vae_std:.3f}")
+            
+        except Exception as e:
+            print(f"Debug logging error: {e}")
 
-# Create enhanced environment
-print("Initialize AirSimMultirotorEnv...")
-env = AirSimMultirotorEnv(depth_image_size=(84, 84))
+def find_latest_checkpoint(checkpoint_dir: str = "./checkpoints/"):
+    """Find the latest checkpoint model to resume training from"""
+    # First check for "latest_model"
+    latest_model_path = os.path.join(checkpoint_dir, "latest_model.zip")
+    if os.path.exists(latest_model_path):
+        # Find the episode number from the most recent episode model
+        episode_models = glob.glob(os.path.join(checkpoint_dir, "episode_*_model.zip"))
+        if episode_models:
+            # Extract episode numbers and find the max
+            episode_numbers = []
+            for model_path in episode_models:
+                try:
+                    # Extract episode number from filename like "episode_20_model.zip"
+                    filename = os.path.basename(model_path)
+                    episode_num = int(filename.split("_")[1])
+                    episode_numbers.append((episode_num, model_path))
+                except (ValueError, IndexError):
+                    continue
+            
+            if episode_numbers:
+                # Return the most recent episode model
+                latest_episode, latest_path = max(episode_numbers, key=lambda x: x[0])
+                return latest_path, latest_episode
+    
+    return None, 0
 
-'''
-# code to get snapshots from airsim environment (using car)
-
-import airsim
-client = airsim.CarClient()
-# car_controls = airsim.CarControls()
-# car_controls.throttle = 1
-# client.setCarControls(car_controls)
-client.enableApiControl(False)
-cur = time.time()
-for i in range(100):
-    # get example rgb image and run through depth anything model
-    pixels = env._get_rgb_image()
-    image = Image.fromarray(pixels)
-    depths = env._get_mde()
-    depth_image = Image.fromarray(depths)
-    ground_truth = env._get_depth_image2()
-    ground_truth_image = Image.fromarray(ground_truth)
-    ground_truth_image = ground_truth_image.convert("L")
-    #image.show()
-    #depth_image.show()
-    #ground_truth_image.show()
-
-    fp = "C:\\Users\\remei\\OneDrive\\Documents\\JHU\\Classes\\08 Deep Learning\\Group Project\\Snapshots"
-    image.save(f"{fp}\\rbg_{cur}_{i}.jpg")
-    depth_image.save(f"{fp}\\mde_{cur}_{i}.jpg")
-    ground_truth_image.save(f"{fp}\\gt_{cur}_{i}.jpg")
-
-    car_state = client.getCarState()
-    print("Speed %d, Gear %d" % (car_state.speed, car_state.gear))
-    time.sleep(1)'''
-
-print("Initialize TD3 model...")
-
-
-# Initialize model with enhanced feature extractor
-model = TD3(
-    "MultiInputPolicy",
-    env,
-    learning_rate=3e-4,
-    buffer_size=150000,  # Increased for more complex state
-    learning_starts=10000,  # More exploration before training
-    batch_size=128,
-    gamma=0.99,
-    train_freq=(1, "episode"),
-    gradient_steps=-1,
-    verbose=1,
-    tensorboard_log="./airsim_enhanced_tensorboard/",
-    policy_kwargs=dict(
-        features_extractor_class=EnhancedFeatureExtractor,
-        features_extractor_kwargs=dict(features_dim=512),
-        net_arch=[400, 300],  # Larger network for complex state
-        activation_fn=torch.nn.ReLU
+def setup_training(resume_from_checkpoint: bool = True):
+    """Setup and train the SAC agent"""
+    
+    # Environment parameters
+    target_position = np.array([50.0, 0.0, -3.0])
+    world_bounds = [0, 60, -10, 10, -10, 0]
+    vae_model_path = "vae_data/vae_best.pth"
+    
+    # Create environment with speed parameter
+    env = DroneObstacleEnv(
+        vae_model_path=vae_model_path,
+        target_position=target_position,
+        world_bounds=world_bounds,
+        max_steps=500
     )
-)
+    
+    # Wrap for vectorized environment
+    env = DummyVecEnv([lambda: Monitor(env)])
+    
+    # Create directories
+    checkpoint_dir = "./checkpoints"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs("./tensorboard_logs", exist_ok=True)
+    
+    # Try to load latest checkpoint
+    model = None
+    starting_episode = 0
+    
+    if resume_from_checkpoint:
+        latest_checkpoint, episode_num = find_latest_checkpoint(checkpoint_dir)
+        if latest_checkpoint and os.path.exists(latest_checkpoint):
+            print(f"\nFound checkpoint: {latest_checkpoint}")
+            print(f"Resuming from episode {episode_num}")
+            try:
+                model = SAC.load(latest_checkpoint, env=env)
+                starting_episode = episode_num
+                print(f"Successfully loaded model from episode {episode_num}")
+            except Exception as e:
+                print(f"Failed to load checkpoint: {e}")
+                print("Starting fresh training...")
+                model = None
+    
+    # If no checkpoint found or loading failed, create new model
+    if model is None:
+        print("\nCreating new model...")
+        model = SAC(
+            "MlpPolicy",
+            env,
+            learning_rate=3e-4,
+            buffer_size=100000,
+            learning_starts=10000,
+            batch_size=256,
+            tau=0.005,
+            gamma=0.99,
+            train_freq=1,
+            gradient_steps=1,
+            ent_coef='auto',
+            policy_kwargs=dict(net_arch=[256, 256]),
+            verbose=1,
+            tensorboard_log="./tensorboard_logs/",
+            seed=42
+        )
+    
+    # Callbacks
+    checkpoint_callback = CheckpointCallback(
+        save_freq=10000,
+        save_path=checkpoint_dir,
+        name_prefix="drone_sac"
+    )
+    
+    # Training callback with episode-based saving (every 20 episodes)
+    training_callback = TrainingCallback(
+        check_freq=1000, 
+        debug_freq=50,
+        save_episode_freq=20,
+        save_path=checkpoint_dir
+    )
+    
+    # Set starting episode count in callback if resuming
+    if starting_episode > 0:
+        training_callback.episode_count = starting_episode
+    
+    callbacks = [checkpoint_callback, training_callback]
+    
+    return model, env, callbacks
 
-print("Starting training with enhanced observations (position + velocity + depth)...")
-model.learn(
-    total_timesteps=150000,  # More timesteps for complex learning
-    callback=EnhancedTrainingCallback(),
-    log_interval=5
-)
+def test_model(model_path: str = "sac_drone_obstacle_avoidance_final", simulation_speed: float = 1.0):
+    """Test the trained model"""
+    print(f"Testing at {simulation_speed}x speed...")
+    
+    target_position = np.array([50.0, 0.0, -3.0])
+    world_bounds = [0, 60, -10, 10, -10, 0]
+    vae_model_path = "vae_data/vae_best.pth"
+    
+    # Create environment with test speed
+    env = DroneObstacleEnv(
+        vae_model_path=vae_model_path,
+        target_position=target_position,
+        world_bounds=world_bounds,
+        max_steps=500,
+        simulation_speed=simulation_speed
+    )
+    
+    model = SAC.load(model_path, env=env)
+    
+    for episode in range(3):
+        obs = env.reset()
+        episode_reward = 0
+        done = False
+        steps = 0
+        
+        print(f"\n=== Episode {episode + 1} (Speed: {simulation_speed}x) ===")
+        
+        while not done and steps < 500:
+            action, _states = model.predict(obs, deterministic=True)
+            obs, reward, done, info = env.step(action)
+            episode_reward += reward
+            steps += 1
+        
+        print(f"Episode finished: Steps: {steps}, Reward: {episode_reward:.2f}")
+    
+    env.close()
 
-# Save the trained model
-model.save("airsim_enhanced_td3")
-print("Training completed!")
+def main():
+    """Main training function"""
+    print("Starting Drone Training...")
+    
+    # Added: Just set your desired speed here, C:\Users\UserName\Documents\AirSim\settings.json
+    # also set json file "ClockSpeed": 2, name to match the simulation speed
+    '''
+    {
+        "SeeDocsAt": "https://github.com/Microsoft/AirSim/blob/main/docs/settings.md",
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ClockSpeed": 2
+    }
+    '''
+
+    env = None  # Initialize to None to avoid UnboundLocalError
+    
+    try:
+        # Setup training (will auto-resume from latest checkpoint if available)
+        model, env, callbacks = setup_training(resume_from_checkpoint=True)
+        
+        print(f"\nTraining Configuration:")
+        print(f"  Target: [50.0, 0.0, -3.0]")
+        print(f"  Checkpoint saving: Every 20 episodes")
+        print(f"  Resume from checkpoint: Enabled")
+        
+        # Train the model
+        print("\nTraining started...")
+        start_time = time.time()
+        
+        model.learn(
+            total_timesteps=10000,
+            callback=callbacks,
+            log_interval=10,
+            tb_log_name="SAC_drone"
+        )
+        
+        training_time = time.time() - start_time
+        print(f"Training completed in {training_time:.2f} seconds")
+        
+        # Save the model
+        model.save("sac_drone_obstacle_avoidance_final")
+        print("Model saved!")
+        
+        # Test the model
+        test_model("sac_drone_obstacle_avoidance_final")
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        if env is not None:
+            env.close()
+
+if __name__ == "__main__":
+    main()

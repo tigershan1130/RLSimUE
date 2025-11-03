@@ -91,7 +91,7 @@ class DataCollector:
         cv2.imwrite(png_path, depth_visual)
         
         npy_path = os.path.join(self.images_dir, f"{filename}.npy")
-        depth_normalized = np.clip(depth_image / 100.0, 0.0, 1.0)
+        depth_normalized = np.clip(depth_image / 100.0, 0.0, 1.0) # IMPORTANT: this is the depth image normalized to 0-1(1meters)
         np.save(npy_path, depth_normalized)
     
     def get_height_adjustment(self, current_height):
