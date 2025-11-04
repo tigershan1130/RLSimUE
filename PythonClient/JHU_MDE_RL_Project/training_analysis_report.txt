@@ -1,0 +1,29 @@
+TRAINING LOG ANALYSIS REPORT
+==================================================
+
+Analysis Date: 2025-11-04 13:19:29
+Total Episodes Analyzed: 418
+Total Training Steps: 32,994
+Total Training Duration: 4.10 hours
+
+EPISODE RESULTS SUMMARY:
+------------------------------
+OUT_OF_BOUNDS: 286 (68.4%)
+TARGET_REACHED: 72 (17.2%)
+COLLISION: 60 (14.4%)
+
+Success Rate: 17.2%
+
+REWARD STATISTICS:
+------------------------------
+Average Reward: -31.87
+Median Reward: -72.73
+Standard Deviation: 109.27
+Minimum Reward: -188.37
+Maximum Reward: 215.54
+
+PERFORMANCE METRICS:
+------------------------------
+Average Steps per Episode: 78.9
+Average Episode Duration: 35.28s
+Average Steps per Second: 2.27

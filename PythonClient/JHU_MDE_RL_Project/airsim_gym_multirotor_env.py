@@ -60,14 +60,29 @@ class DroneObstacleEnv(gym.Env):
         self.max_lateral_speed = 2.0     # m/s
         self.max_vertical_speed = 2.0    # m/s
         
+        # Normalize/validate world bounds ordering (ensure mins <= maxs)
+        x_min, x_max, y_min, y_max, z_min, z_max = self.world_bounds
+        self.world_bounds = [
+            min(x_min, x_max), max(x_min, x_max),
+            min(y_min, y_max), max(y_min, y_max),
+            min(z_min, z_max), max(z_min, z_max)
+        ]
+
         # Reward function parameters
-        self.progress_scale = 50.0
-        self.obstacle_k = 3.0
+        self.progress_scale = 5.0
+        self.obstacle_k = 10.0
         self.previous_normalized_distance = None
         
         # Timer reward parameters
         self.speed_reward_scale = 0.5    # Reward for maintaining speed
         self.time_penalty_scale = 0.01   # Small penalty per step to encourage efficiency
+        # Boundary warning distance (meters). Within this distance, apply scaled penalty to -100 at boundary
+        self.boundary_warning_distance = 3.0
+        self.boundary_penalty_scale = 3.0
+        # Directional weighting strength for 3x3 tiles (0 = uniform, 1 = fully directional)
+        self.direction_weight_k = 0.3
+        # Small tolerance for boundary checks to avoid false positives at edges
+        self.boundary_epsilon = 0.05
 
         # Normalization parameters
         self.max_expected_distance = np.linalg.norm(
@@ -85,6 +100,9 @@ class DroneObstacleEnv(gym.Env):
         self.step_times = []
         self.episode_start_time = None
         self.episode_step_times = []
+        self.episode_reward_total = 0.0
+        self.episode_rewards_history = []  # store per-episode totals for rolling stats
+        self.last_termination_reason = None
         self.component_times = {
             'action_execution': [],
             'observation': [],
@@ -170,10 +188,14 @@ class DroneObstacleEnv(gym.Env):
         self.previous_normalized_distance = None
         self.episode_start_time = time.time()
         self.episode_step_times = []
+        self.episode_reward_total = 0.0
         self.component_times = {k: [] for k in self.component_times.keys()}
+        self.last_termination_reason = None
         
         # Draw target visualization (thread-safe)
         self._draw_target_visualization()
+        # Draw world bounds wireframe for debugging
+        self._draw_world_bounds()
         
         # Initialize observation
         observation = self._get_observation()
@@ -231,8 +253,13 @@ class DroneObstacleEnv(gym.Env):
         reward_time = time.time() - reward_start
         self.component_times['reward_calculation'].append(reward_time)
         
+        # Accumulate episode reward
+        self.episode_reward_total += float(reward)
+        
         # Check episode truncation (max steps)
         truncated = self.current_step >= self.max_steps
+        if truncated:
+            self.last_termination_reason = 'time_limit'
         
         # Calculate total step time
         step_duration = time.time() - step_start_time
@@ -240,7 +267,7 @@ class DroneObstacleEnv(gym.Env):
         self.step_times.append(step_duration)
         
         # Enhanced timing diagnostics
-        if self.current_step % 50 == 0 or terminated or truncated:
+        if self.current_step % 1000 == 0:
             self._log_timing_diagnostics()
         
         info = {
@@ -253,6 +280,8 @@ class DroneObstacleEnv(gym.Env):
         
         # Log episode summary if episode ended
         if terminated or truncated:
+            # Keep history for rolling stats
+            self.episode_rewards_history.append(self.episode_reward_total)
             self._log_episode_summary(terminated, truncated)
         
         return observation, reward, terminated, truncated, info
@@ -391,12 +420,26 @@ class DroneObstacleEnv(gym.Env):
         """Log comprehensive episode summary"""
         episode_duration = time.time() - self.episode_start_time
         
-        self.log(f"\nEPISODE SUMMARY\n")
-        self.log(f"Result: {'SUCCESS' if terminated else 'TIME LIMIT' if truncated else 'UNKNOWN'}\n")
+        self.log(f"\nEpisode \n")
+        # Reason detail for termination
+        if terminated:
+            reason = self.last_termination_reason or 'success'
+        elif truncated:
+            reason = 'time_limit'
+        else:
+            reason = 'unknown'
+        self.log(f"Result: {reason.upper()}\n")
         self.log(f"Total Steps: {self.current_step}\n")
+        self.log(f"Episode Reward: {self.episode_reward_total:.2f}\n")
         self.log(f"Episode Duration: {episode_duration:.2f}s\n")
         self.log(f"Average Step Time: {np.mean(self.episode_step_times):.3f}s\n")
         self.log(f"Steps per Second: {len(self.episode_step_times)/episode_duration:.1f}\n")
+        
+        # Rolling mean of last 10 episodes
+        if len(self.episode_rewards_history) > 0:
+            last_n = self.episode_rewards_history[-10:]
+            mean_last_10 = float(np.mean(last_n))
+            self.log(f"Mean Reward (last {len(last_n)}): {mean_last_10:.2f}\n")
         
         # Performance metrics
         if len(self.step_times) >= 100:
@@ -508,13 +551,36 @@ class DroneObstacleEnv(gym.Env):
         if collision:
             reward_breakdown['collision'] = -100.0
             self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['collision'])
+            self.last_termination_reason = 'collision'
             return -100.0, True
         
-        # 2. Check out of bounds
-        if self._is_out_of_bounds(position):
-            reward_breakdown['out_of_bounds'] = -100.0
-            self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['out_of_bounds'])
+        # 2. Boundary penalty (unified):
+        # - If out-of-bounds (min distance <= 0): terminate with -100
+        # - If within warning distance: apply scaled penalty up to -100 at boundary
+        x, y, z = position
+        x_min, x_max, y_min, y_max, z_min, z_max = self.world_bounds
+        distances_to_boundaries = [
+            x - x_min,
+            x_max - x,
+            y - y_min,
+            y_max - y,
+            z - z_min,
+            z_max - z
+        ]
+        min_distance_to_boundary = float(min(distances_to_boundaries))
+        if min_distance_to_boundary <= -self.boundary_epsilon:
+            reward_breakdown['boundary'] = -100.0
+            # Add context for debugging unexpected OOB
+            self.log(f"OOB: pos={position}, bounds={self.world_bounds}\n")
+            self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['boundary'])
+            self.last_termination_reason = 'out_of_bounds'
             return -100.0, True
+        boundary_penalty = 0.0
+        if min_distance_to_boundary < self.boundary_warning_distance:
+            safe_ratio = max(0.0, min_distance_to_boundary / self.boundary_warning_distance)
+            boundary_penalty = -self.boundary_penalty_scale * (1.0 - safe_ratio)
+            total_reward += boundary_penalty
+        reward_breakdown['boundary'] = boundary_penalty
         
         # 3. Check target reached (using actual distance)
         distance_magnitude = np.linalg.norm(normalized_relative_distance)
@@ -524,6 +590,7 @@ class DroneObstacleEnv(gym.Env):
             reward_breakdown['target_reached'] = 100.0
             reward_breakdown['time_bonus'] = time_bonus
             self._log_reward_breakdown(reward_breakdown, 100.0 + time_bonus)
+            self.last_termination_reason = 'target_reached'
             return 100.0 + time_bonus, True
         
         # 4. Progress reward using normalized relative distance
@@ -556,9 +623,9 @@ class DroneObstacleEnv(gym.Env):
         computation_time = time.time() - computation_start
         self.component_times['reward_computation'].append(computation_time)
         
-        # Log reward breakdown every 50 steps
-        if self.current_step % 50 == 0:
-            self._log_reward_breakdown(reward_breakdown, total_reward)
+        # Log reward breakdown every 1000 steps ( NO Point of now, too spamming)
+        #if self.current_step % 1000 == 0:
+        #    self._log_reward_breakdown(reward_breakdown, total_reward)
         
         return total_reward, terminated
 
@@ -584,64 +651,87 @@ class DroneObstacleEnv(gym.Env):
         return reward
 
     def _calculate_tiled_obstacle_reward(self, depth_map: np.ndarray, velocity: np.ndarray) -> float:
-        """Tiled obstacle reward with directional guidance"""
+        """Tiled obstacle reward with directional guidance (3x3, first-person).
+        - 3x3 tiles: top-left..bottom-right
+        - Center tile uses neutral weighting (no velocity-based emphasis)
+        - Other tiles weighted by lateral (y) and vertical (z) velocity direction
+        """
         height, width = depth_map.shape
-        
-        # Create 2x3 grid of tiles
-        tile_height = height // 2
+
+        # Create 3x3 grid of tiles
+        tile_height = height // 3
         tile_width = width // 3
-        
-        tile_means = []
-        
-        for i in range(2):  # rows
-            for j in range(3):  # columns
+
+        tile_means = []  # order: [tl, tc, tr, ml, mc, mr, bl, bc, br]
+        for i in range(3):  # rows: 0=top,1=middle,2=bottom
+            for j in range(3):  # cols: 0=left,1=center,2=right
                 row_start = i * tile_height
-                row_end = (i + 1) * tile_height
+                row_end = (i + 1) * tile_height if i < 2 else height
                 col_start = j * tile_width
-                col_end = (j + 1) * tile_width
-                
+                col_end = (j + 1) * tile_width if j < 2 else width
+
                 tile = depth_map[row_start:row_end, col_start:col_end]
-                tile_mean = np.mean(tile)
-                tile_means.append(tile_mean)
-        
-        # Get velocity direction (simplified - no yaw)
-        vel_y, vel_z = velocity[1], velocity[2]
-        vel_magnitude = np.sqrt(vel_y**2 + vel_z**2)
-        
-        if vel_magnitude > 0:
-            vel_y_norm = vel_y / vel_magnitude
-            vel_z_norm = vel_z / vel_magnitude
+                tile_means.append(float(np.mean(tile)))
+
+        # Velocity-based directional emphasis
+        vel_y, vel_z = float(velocity[1]), float(velocity[2])
+        vel_mag = np.sqrt(vel_y**2 + vel_z**2)
+        if vel_mag > 1e-6:
+            vel_y_norm = vel_y / vel_mag
+            vel_z_norm = vel_z / vel_mag
         else:
-            vel_y_norm, vel_z_norm = 0, 0
-        
-        # Directional weights
-        directional_weights = np.array([
-            max(0, -vel_y_norm) * max(0, vel_z_norm),    # top-left
-            max(0, vel_z_norm),                          # top-middle
-            max(0, vel_y_norm) * max(0, vel_z_norm),     # top-right
-            max(0, -vel_y_norm) * max(0, -vel_z_norm),   # bottom-left  
-            max(0, -vel_z_norm),                         # bottom-middle
-            max(0, vel_y_norm) * max(0, -vel_z_norm)     # bottom-right
-        ])
-        
-        # Normalize weights
-        if np.sum(directional_weights) > 0:
-            directional_weights = directional_weights / np.sum(directional_weights)
-        
-        # Calculate weighted reward
-        weighted_tile_mean = np.sum(tile_means * directional_weights)
-        overall_mean = np.mean(depth_map)
+            vel_y_norm, vel_z_norm = 0.0, 0.0
+
+        # Column weights from lateral velocity (left/right); center column neutral
+        col_left = max(0.0, -vel_y_norm)
+        col_center = 1.0  # neutral for center column
+        col_right = max(0.0, vel_y_norm)
+
+        # Row weights from vertical velocity (up/down); center row neutral
+        # Note: In AirSim, z up is negative; moving up => vel_z < 0 -> emphasize top row
+        row_top = max(0.0, -vel_z_norm)
+        row_mid = 1.0  # neutral for center row
+        row_bot = max(0.0, vel_z_norm)
+
+        # Build 3x3 weights grid (center tile neutral, others directional)
+        weights_grid = np.array([
+            [row_top * col_left,  row_top * col_center,  row_top * col_right],
+            [row_mid * col_left,  1.0,                   row_mid * col_right],  # center tile fixed 1.0
+            [row_bot * col_left,  row_bot * col_center,  row_bot * col_right],
+        ], dtype=np.float32)
+
+        weights = weights_grid.flatten()
+
+        # Blend between uniform and directional weights: blended = (1-k)*uniform + k*directional
+        num_tiles = weights.shape[0]
+        uniform = np.ones_like(weights, dtype=np.float32) / float(num_tiles)
+        w_sum = float(np.sum(weights))
+        if w_sum > 1e-6:
+            weights = weights / w_sum
+        else:
+            weights = uniform.copy()
+        k = float(self.direction_weight_k)
+        blended_weights = (1.0 - k) * uniform + k * weights
+        blended_weights = blended_weights / float(np.sum(blended_weights))
+
+        # Calculate weighted openness: prefer tiles with larger depth (more free space)
+        tile_means_arr = np.array(tile_means, dtype=np.float32)
+        weighted_tile_mean = float(np.sum(tile_means_arr * blended_weights))
+        overall_mean = float(np.mean(depth_map))
+
+        # Reward moving towards open space vs overall scene openness
         obstacle_reward = self.obstacle_k * (weighted_tile_mean - overall_mean)
-        
         return obstacle_reward
 
     def _is_out_of_bounds(self, position: np.ndarray) -> bool:
         """Check if drone is out of world bounds"""
         x, y, z = position
         x_min, x_max, y_min, y_max, z_min, z_max = self.world_bounds
-        return (x < x_min or x > x_max or 
-                y < y_min or y > y_max or 
-                z < z_min or z > z_max)
+        # Use epsilon tolerance near edges to avoid false positives
+        eps = self.boundary_epsilon if hasattr(self, 'boundary_epsilon') else 0.0
+        return (x < x_min - eps or x > x_max + eps or 
+                y < y_min - eps or y > y_max + eps or 
+                z < z_min - eps or z > z_max + eps)
 
     def _get_current_position(self) -> np.ndarray:
         """Helper method to get current position for bounds checking (thread-safe)"""
@@ -688,6 +778,45 @@ class DroneObstacleEnv(gym.Env):
             )
         
         self.log(f"Target visualization drawn at: {self.target_position}\n")
+
+    def _draw_world_bounds(self):
+        """Draw a wireframe box representing world bounds (thread-safe)"""
+        x_min, x_max, y_min, y_max, z_min, z_max = self.world_bounds
+        # 8 corners of the box
+        corners = [
+            airsim.Vector3r(x_min, y_min, z_min),
+            airsim.Vector3r(x_max, y_min, z_min),
+            airsim.Vector3r(x_max, y_max, z_min),
+            airsim.Vector3r(x_min, y_max, z_min),
+            airsim.Vector3r(x_min, y_min, z_max),
+            airsim.Vector3r(x_max, y_min, z_max),
+            airsim.Vector3r(x_max, y_max, z_max),
+            airsim.Vector3r(x_min, y_max, z_max),
+        ]
+
+        # Edges (pairs of indices)
+        edges = [
+            (0,1),(1,2),(2,3),(3,0),  # bottom rectangle
+            (4,5),(5,6),(6,7),(7,4),  # top rectangle
+            (0,4),(1,5),(2,6),(3,7)   # verticals
+        ]
+
+        # Build line list
+        line_points = []
+        for a, b in edges:
+            line_points.append(corners[a])
+            line_points.append(corners[b])
+
+        # Draw persistent wireframe box
+        with self.client_lock:
+            self.client.simPlotLineList(
+                points=line_points,
+                color_rgba=[0.0, 0.5, 1.0, 0.8],  # cyan-ish
+                thickness=3.0,
+                duration=-1.0,
+                is_persistent=True
+            )
+        self.log("World bounds wireframe drawn.\n")
 
     def _update_drone_to_target_line(self, drone_position: np.ndarray):
         """Draw a line between current drone position and target point (thread-safe)"""

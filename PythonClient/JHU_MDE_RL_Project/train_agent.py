@@ -3,6 +3,7 @@ import os
 import numpy as np
 import time
 import glob
+import argparse
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, BaseCallback
@@ -156,7 +157,7 @@ def setup_training(resume_from_checkpoint: bool = True):
     
     # Environment parameters
     target_position = np.array([50.0, 0.0, -3.0])
-    world_bounds = [0, 60, -10, 10, -10, 0]
+    world_bounds = [-15, 70, -15, 15, -15, 0]
     vae_model_path = "vae_data/vae_best.pth"
     
     # Create environment with speed parameter
@@ -237,45 +238,207 @@ def setup_training(resume_from_checkpoint: bool = True):
     
     return model, env, callbacks
 
-def test_model(model_path: str = "sac_drone_obstacle_avoidance_final", simulation_speed: float = 1.0):
-    """Test the trained model"""
-    print(f"Testing at {simulation_speed}x speed...")
+def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = True):
+    """
+    Test a trained model with visual feedback
     
+    Args:
+        model_path: Path to the model file (e.g., "checkpoints/episode_20_model.zip")
+        num_episodes: Number of test episodes to run
+        deterministic: Whether to use deterministic actions (True) or sample from policy (False)
+    """
+    print(f"\n{'='*60}")
+    print(f"TESTING MODEL: {model_path}")
+    print(f"Episodes: {num_episodes}, Deterministic: {deterministic}")
+    print(f"{'='*60}\n")
+    
+    # Check if model file exists
+    if not os.path.exists(model_path):
+        print(f"ERROR: Model file not found: {model_path}")
+        print("\nAvailable models in checkpoints/:")
+        checkpoint_dir = "./checkpoints"
+        if os.path.exists(checkpoint_dir):
+            episode_models = glob.glob(os.path.join(checkpoint_dir, "episode_*_model.zip"))
+            for model in sorted(episode_models):
+                print(f"  - {model}")
+        return
+    
+    # Environment parameters (same as training)
     target_position = np.array([50.0, 0.0, -3.0])
-    world_bounds = [0, 60, -10, 10, -10, 0]
+    world_bounds = [-15, 70, -15, 15, -15, 0]
     vae_model_path = "vae_data/vae_best.pth"
     
-    # Create environment with test speed
+    # Create environment
     env = DroneObstacleEnv(
         vae_model_path=vae_model_path,
         target_position=target_position,
         world_bounds=world_bounds,
-        max_steps=500,
-        simulation_speed=simulation_speed
+        max_steps=500
     )
     
-    model = SAC.load(model_path, env=env)
+    # Load the model
+    try:
+        model = SAC.load(model_path, env=env)
+        print(f"? Model loaded successfully\n")
+    except Exception as e:
+        print(f"ERROR: Failed to load model: {e}")
+        env.close()
+        return
     
-    for episode in range(3):
-        obs = env.reset()
-        episode_reward = 0
+    # Extract episode number from path if available (for display)
+    episode_num = "unknown"
+    if "episode_" in model_path:
+        try:
+            parts = os.path.basename(model_path).split("_")
+            episode_num = parts[1] if len(parts) > 1 else "unknown"
+        except:
+            pass
+    
+    # Run test episodes
+    episode_rewards = []
+    episode_steps = []
+    success_count = 0
+    
+    for episode in range(num_episodes):
+        obs, info = env.reset()
+        episode_reward = 0.0
         done = False
+        truncated = False
         steps = 0
         
-        print(f"\n=== Episode {episode + 1} (Speed: {simulation_speed}x) ===")
+        print(f"\n--- Episode {episode + 1}/{num_episodes} (Model: Episode {episode_num}) ---")
+        episode_start = time.time()
         
-        while not done and steps < 500:
-            action, _states = model.predict(obs, deterministic=True)
-            obs, reward, done, info = env.step(action)
+        while not done and not truncated and steps < 500:
+            action, _states = model.predict(obs, deterministic=deterministic)
+            obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
             steps += 1
+            
+            # Progress indicator every 100 steps
+            if steps % 100 == 0:
+                print(f"  Step {steps}, Reward: {episode_reward:.2f}")
         
-        print(f"Episode finished: Steps: {steps}, Reward: {episode_reward:.2f}")
+        episode_duration = time.time() - episode_start
+        
+        # Determine result
+        if done:
+            result = "SUCCESS"
+            success_count += 1
+        elif truncated:
+            result = "TIME LIMIT"
+        else:
+            result = "MAX STEPS"
+        
+        print(f"  ? {result} | Steps: {steps} | Reward: {episode_reward:.2f} | Duration: {episode_duration:.1f}s")
+        
+        episode_rewards.append(episode_reward)
+        episode_steps.append(steps)
+    
+    # Summary statistics
+    print(f"\n{'='*60}")
+    print(f"TEST SUMMARY (Model: Episode {episode_num})")
+    print(f"{'='*60}")
+    print(f"Episodes: {num_episodes}")
+    print(f"Success Rate: {success_count}/{num_episodes} ({100*success_count/num_episodes:.1f}%)")
+    print(f"Mean Reward: {np.mean(episode_rewards):.2f} � {np.std(episode_rewards):.2f}")
+    print(f"Mean Steps: {np.mean(episode_steps):.1f} � {np.std(episode_steps):.1f}")
+    print(f"Best Reward: {np.max(episode_rewards):.2f}")
+    print(f"Worst Reward: {np.min(episode_rewards):.2f}")
+    print(f"{'='*60}\n")
     
     env.close()
 
 def main():
-    """Main training function"""
+    """Main function - supports both training and testing modes"""
+    parser = argparse.ArgumentParser(
+        description="Train or test a SAC drone obstacle avoidance agent",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Train the model (default behavior)
+  python train_agent.py
+  
+  # Test a specific model (e.g., episode 20)
+  python train_agent.py --test checkpoints/episode_20_model.zip
+  
+  # Test with multiple episodes
+  python train_agent.py --test checkpoints/episode_400_model.zip --episodes 5
+  
+  # Test with stochastic policy (non-deterministic)
+  python train_agent.py --test checkpoints/episode_400_model.zip --stochastic
+  
+  # List available models
+  python train_agent.py --list-models
+        """
+    )
+    
+    parser.add_argument(
+        "--test",
+        type=str,
+        default=None,
+        help="Path to model file to test (e.g., 'checkpoints/episode_20_model.zip'). If specified, runs in test mode only."
+    )
+    
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=3,
+        help="Number of test episodes to run (default: 3)"
+    )
+    
+    parser.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="Use stochastic policy (sample actions) instead of deterministic during testing"
+    )
+    
+    parser.add_argument(
+        "--list-models",
+        action="store_true",
+        help="List all available model checkpoints and exit"
+    )
+    
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Start training from scratch (don't resume from checkpoint)"
+    )
+    
+    args = parser.parse_args()
+    
+    # List models mode
+    if args.list_models:
+        checkpoint_dir = "./checkpoints"
+        print(f"\nAvailable models in {checkpoint_dir}/:\n")
+        if os.path.exists(checkpoint_dir):
+            episode_models = glob.glob(os.path.join(checkpoint_dir, "episode_*_model.zip"))
+            if episode_models:
+                for model in sorted(episode_models):
+                    # Extract episode number
+                    try:
+                        filename = os.path.basename(model)
+                        episode_num = filename.split("_")[1]
+                        print(f"  Episode {episode_num:>4}: {model}")
+                    except:
+                        print(f"  {model}")
+                print()
+            else:
+                print("  No episode models found.\n")
+        else:
+            print(f"  Checkpoint directory does not exist: {checkpoint_dir}\n")
+        return
+    
+    # Test mode
+    if args.test:
+        test_model(
+            model_path=args.test,
+            num_episodes=args.episodes,
+            deterministic=not args.stochastic
+        )
+        return
+    
+    # Training mode (default)
     print("Starting Drone Training...")
     
     # Added: Just set your desired speed here, C:\Users\UserName\Documents\AirSim\settings.json
@@ -293,19 +456,20 @@ def main():
     
     try:
         # Setup training (will auto-resume from latest checkpoint if available)
-        model, env, callbacks = setup_training(resume_from_checkpoint=True)
+        resume = not args.no_resume
+        model, env, callbacks = setup_training(resume_from_checkpoint=resume)
         
         print(f"\nTraining Configuration:")
         print(f"  Target: [50.0, 0.0, -3.0]")
         print(f"  Checkpoint saving: Every 20 episodes")
-        print(f"  Resume from checkpoint: Enabled")
+        print(f"  Resume from checkpoint: {'Enabled' if resume else 'Disabled'}")
         
         # Train the model
         print("\nTraining started...")
         start_time = time.time()
         
         model.learn(
-            total_timesteps=10000,
+            total_timesteps=100000,
             callback=callbacks,
             log_interval=10,
             tb_log_name="SAC_drone"
@@ -318,8 +482,9 @@ def main():
         model.save("sac_drone_obstacle_avoidance_final")
         print("Model saved!")
         
-        # Test the model
-        test_model("sac_drone_obstacle_avoidance_final")
+        # Test the final model
+        print("\nTesting final model...")
+        test_model("sac_drone_obstacle_avoidance_final", num_episodes=3)
         
     except Exception as e:
         print(f"Error: {e}")
