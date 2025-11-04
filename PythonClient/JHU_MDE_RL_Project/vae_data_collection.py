@@ -27,9 +27,14 @@ class DataCollector:
         self.ideal_height_max = -3.0  # 3.0 meters above ground
         
         # Data collection parameters
-        self.max_flight_time = 300
+        self.max_flight_time = 1000
         self.image_interval = 0.5
         self.total_images_target = 10000
+
+        # Repositioning values
+        self.repositioning_height = 20.0 # 20.0 meters above ground
+        self.repositioning_dx = 10.0 # 10.0 x axis displacement
+        self.repositioning_dy = 10.0 # 10.0 y axis displacement
         
     def get_depth_image(self, camera_name="0"):
         """Capture depth image from AirSim"""
@@ -122,10 +127,31 @@ class DataCollector:
         # Vertical movement based on height maintenance
         vz = self.get_height_adjustment(current_height)
         
-        yaw_rate = np.random.uniform(-45, 45)
+        yaw_rate = np.random.uniform(-46, 44)
         
         return vx, vy, vz, yaw_rate
-    
+
+    def random_reposition(self):
+        """Randomly reposition the drone for image diversity"""
+        position = self.get_drone_position()
+        state = self.client.getMultirotorState()
+        orientation = state.kinematics_estimated.orientation
+        current_height = position[2]
+        transposing = True
+        x_transpose_choice = position[0]
+        y_transpose_choice = position[1]
+
+        # Horizontal transpose
+        while transposing:
+            x_transpose_choice = np.random.uniform(-99, 99)
+            y_transpose_choice = np.random.uniform(-99, 99)
+            transposing = self.client.simSetVehiclePose(pose=airsim.Pose(airsim.Vector3r(x_transpose_choice,
+                                                                                        y_transpose_choice,
+                                                                                        current_height),
+                                                                        orientation),
+                                                        ignore_collision=True)
+        return x_transpose_choice, y_transpose_choice
+
     def is_safe_position(self, position):
         """Check if position is within safe XY bounds (Z bounds removed)"""
         x, y, z = position
@@ -183,7 +209,7 @@ class DataCollector:
                 
                 # Generate movement with height maintenance
                 vx, vy, vz, yaw_rate = self.random_move()
-                
+
                 # Execute movement
                 self.client.moveByVelocityBodyFrameAsync(
                     vx, vy, vz, duration=1.0,
@@ -205,12 +231,16 @@ class DataCollector:
                         
                         collected_images += 1
                         last_image_time = current_time
-                        
+
+                        if collected_images % 50 == 0:
+                            position = self.random_reposition()
+
                         if collected_images % 100 == 0:
                             position = self.get_drone_position()
                             height_above_ground = abs(position[2])
                             print(f"Collected {collected_images} images")
                             print(f"Current position: X:{position[0]:.2f}, Y:{position[1]:.2f}, Height:{height_above_ground:.2f}m")
+
                 
                 # Check XY position safety only
                 position = self.get_drone_position()
