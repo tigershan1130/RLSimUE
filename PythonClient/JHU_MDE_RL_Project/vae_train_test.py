@@ -9,7 +9,9 @@ import cv2
 import matplotlib.pyplot as plt
 from vae_model import VAE, improved_vae_loss, save_vae
 import time
+from pathlib import Path
 from datetime import datetime
+import json
 
 class DepthImageDataset(Dataset):
     def __init__(self, data_dir="./vae_data", img_size=(72, 128)):
@@ -129,7 +131,7 @@ def validate_model(model, val_loader, device, beta=0.1):
     model.train()
     return avg_val_loss, avg_val_recon, avg_val_kld
 
-def debug_reconstruction(model, dataset, device, epoch, split="train"):
+def debug_reconstruction(model, dataset, device, epoch, split="train", output_dir:str='.'):
     """Save sample reconstructions for debugging"""
     model.eval()
     with torch.no_grad():
@@ -158,8 +160,8 @@ def debug_reconstruction(model, dataset, device, epoch, split="train"):
             plt.colorbar(im2, ax=axes[i, 1], fraction=0.046)
         
         plt.tight_layout()
-        os.makedirs("vae_data/debug", exist_ok=True)
-        plt.savefig(f'vae_data/debug/reconstruction_{split}_epoch_{epoch}.png', dpi=100, bbox_inches='tight')
+        os.makedirs("vae_data/"+output_dir+"/debug", exist_ok=True)
+        plt.savefig(f'vae_data/{output_dir}/debug/reconstruction_{split}_epoch_{epoch}.png', dpi=100, bbox_inches='tight')
         plt.close()
         
         # Calculate metrics for these samples
@@ -168,7 +170,7 @@ def debug_reconstruction(model, dataset, device, epoch, split="train"):
     
     model.train()
 
-def plot_training_history(train_losses, val_losses, val_recon_losses, val_kld_losses):
+def plot_training_history(train_losses, val_losses, val_recon_losses, val_kld_losses, output_dir:str='.'):
     """Plot training history"""
     plt.figure(figsize=(15, 5))
     
@@ -200,18 +202,26 @@ def plot_training_history(train_losses, val_losses, val_recon_losses, val_kld_lo
     plt.grid(True)
     
     plt.tight_layout()
-    plt.savefig('vae_data/training_history.png', dpi=150, bbox_inches='tight')
+    plt.savefig('vae_data/'+output_dir+'/training_history.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-def train_vae():
+def train_vae(output_dir:str='.'):
     # Extended training parameters
     batch_size = 32
     learning_rate = 1e-4
     epochs = 200  # Extended training
     latent_dim = 32
     img_size = (72, 128)
-    beta = 0.1  # KL divergence weight
+    beta = 5.  # KL divergence weight
     debug_epochs = 25
+
+    training_stats = {
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "epochs": epochs,
+        "latent_dimension": latent_dim,
+        "Beta": beta
+    }
     
     # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -228,7 +238,11 @@ def train_vae():
     if len(full_dataset) == 0:
         print("No training images found!")
         return
-    
+
+    # Save off information for the current run
+    with open("vae_data/"+output_dir+"/training_stats.json", 'w') as fp:
+        json.dump(training_stats, fp)
+
     # Split dataset (80% train, 20% validation)
     train_size = int(0.8 * len(full_dataset))
     val_size = len(full_dataset) - train_size
@@ -245,7 +259,7 @@ def train_vae():
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     
     # Learning rate scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=15)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
     
     print(f"Starting training with {len(train_dataset)} training images")
     print(f"Batch size: {batch_size}")
@@ -253,8 +267,9 @@ def train_vae():
     print(f"Total epochs: {epochs}")
     
     # Create output directory
+
     os.makedirs("vae_data", exist_ok=True)
-    os.makedirs("vae_data/debug", exist_ok=True)
+    os.makedirs("vae_data/"+output_dir+"/debug", exist_ok=True)
     
     # Training history
     train_losses = []
@@ -317,25 +332,25 @@ def train_vae():
             
         # Save debug reconstructions every 50 epochs
         if epoch % debug_epochs == 0:
-            debug_reconstruction(model, train_dataset, device, epoch, "train")
-            debug_reconstruction(model, val_dataset, device, epoch, "val")
+            debug_reconstruction(model, train_dataset, device, epoch, "train", output_dir=output_dir)
+            debug_reconstruction(model, val_dataset, device, epoch, "val", output_dir=output_dir)
         
         # Save model every 50 epochs and when validation loss improves
         if epoch % debug_epochs == 0:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 print(f"New best validation loss: {best_val_loss:.2f}")
-                save_vae(model, "vae_data/vae_best.pth")
+                save_vae(model, "vae_data/"+output_dir+"/vae_best.pth")
             
-            save_vae(model, f"vae_data/vae_epoch_{epoch}.pth")
+            save_vae(model, f"vae_data/"+output_dir+f"/vae_epoch_{epoch}.pth")
         
         # Plot training history every 50 epochs
         if epoch % debug_epochs == 0:
-            plot_training_history(train_losses, val_losses, val_recon_losses, val_kld_losses)
+            plot_training_history(train_losses, val_losses, val_recon_losses, val_kld_losses, output_dir=output_dir)
     
     # Final save and plots
-    save_vae(model, "vae_data/vae_final.pth")
-    plot_training_history(train_losses, val_losses, val_recon_losses, val_kld_losses)
+    save_vae(model, "vae_data/"+output_dir+"/vae_final.pth")
+    plot_training_history(train_losses, val_losses, val_recon_losses, val_kld_losses, output_dir=output_dir)
     
     total_time = time.time() - start_time
     print(f"\n=== TRAINING COMPLETED ===")
@@ -348,19 +363,21 @@ def train_vae():
     final_mse_per_pixel = val_recon_losses[-1] / (img_size[0] * img_size[1])
     print(f"Final validation MSE per pixel: {final_mse_per_pixel:.6f}")
 
-def test_trained_model():
+def test_trained_model(output_dir:str='.'):
     """Test the trained model on validation set"""
     print("\n=== TESTING TRAINED MODEL ===")
-    
+
+    beta = 3.
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load best model
     model = VAE(input_shape=(72, 128), latent_dim=32).to(device)
     try:
-        model.load_state_dict(torch.load("vae_data/vae_best.pth", map_location=device))
+        model.load_state_dict(torch.load("vae_data/"+output_dir+"/vae_best.pth", map_location=device))
         print("Loaded best model for testing")
     except:
-        model.load_state_dict(torch.load("vae_data/vae_final.pth", map_location=device))
+        model.load_state_dict(torch.load("vae_data/"+output_dir+"/vae_final.pth", map_location=device))
         print("Loaded final model for testing")
     
     model.eval()
@@ -374,7 +391,7 @@ def test_trained_model():
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
     
     # Test on validation set
-    test_loss, test_recon, test_kld = validate_model(model, val_loader, device)
+    test_loss, test_recon, test_kld = validate_model(model, val_loader, device, beta=beta)
     
     print(f"Test Results:")
     print(f"Total Loss: {test_loss:.2f}")
@@ -383,11 +400,15 @@ def test_trained_model():
     print(f"MSE per pixel: {test_recon / (72*128):.6f}")
     
     # Generate sample reconstructions
-    debug_reconstruction(model, val_dataset, device, "final_test", "test")
+    debug_reconstruction(model, val_dataset, device, "final_test", "test", output_dir=output_dir)
 
 if __name__ == "__main__":
+
+    # Get location for current run directory
+    output_path = 'vae_' + str(datetime.now().strftime("%m%d%Y_%H%M"))
+
     # Train the model
-    train_vae()
+    train_vae(output_dir=output_path)
     
     # Test the trained model
-    test_trained_model()
+    test_trained_model(output_dir=output_path)
