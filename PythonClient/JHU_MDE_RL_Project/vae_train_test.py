@@ -239,9 +239,6 @@ def train_vae(output_dir:str='.'):
         print("No training images found!")
         return
 
-    # Save off information for the current run
-    with open("vae_data/"+output_dir+"/training_stats.json", 'w') as fp:
-        json.dump(training_stats, fp)
 
     # Split dataset (80% train, 20% validation)
     train_size = int(0.8 * len(full_dataset))
@@ -270,6 +267,11 @@ def train_vae(output_dir:str='.'):
 
     os.makedirs("vae_data", exist_ok=True)
     os.makedirs("vae_data/"+output_dir+"/debug", exist_ok=True)
+
+
+    # Save off information for the current run
+    with open("vae_data/"+output_dir+"/training_stats.json", 'w') as fp:
+        json.dump(training_stats, fp)
     
     # Training history
     train_losses = []
