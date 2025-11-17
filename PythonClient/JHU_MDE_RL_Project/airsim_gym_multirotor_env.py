@@ -77,6 +77,7 @@ class DroneObstacleEnv(gym.Env):
         self.previous_normalized_distance = None
         self.previous_velocity = None  # Track previous velocity for smoothness penalty
         self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
+        self.overshot_penalty = -50.0  # Penalty for overshooting the target
         
         # Timer reward parameters
         self.speed_reward_scale = 0.5    # Reward for maintaining speed
@@ -254,7 +255,7 @@ class DroneObstacleEnv(gym.Env):
                 float(forward_velocity),
                 float(lateral_velocity), 
                 float(vertical_velocity),
-                duration=0.4  # Command duration 0.4, but simulation runs at x2 clock speed
+                duration=10  # Command duration 10 seconds very long
             )
         action_send_time = time.time() - action_send_start
 
@@ -723,6 +724,20 @@ class DroneObstacleEnv(gym.Env):
             self._log_reward_breakdown(reward_breakdown, 100.0 + time_bonus)
             self.last_termination_reason = 'target_reached'
             return 100.0 + time_bonus, True
+        
+        # 3b. Check if drone has overshot target on X axis
+        # Target is at x=50.0, drone starts at x=0.0, so if drone x > 50.0, it has overshot
+        drone_x = position[0]
+        target_x = self.target_position[0]
+        
+        # Check if we've passed the target (overshot forward)
+        if drone_x > target_x:
+            # Drone has passed the target on X axis - terminate with negative reward
+            reward_breakdown['missed_target'] = self.overshot_penalty
+            final_reward = total_reward + self.overshot_penalty
+            self._log_reward_breakdown(reward_breakdown, final_reward)
+            self.last_termination_reason = 'missed_target_overshot_x'
+            return final_reward, True  # Return True to terminate episode, Gymnasium will call reset()
         
         # 4. Progress reward using normalized relative distance
         progress_reward = self._calculate_progress_reward(normalized_relative_distance)
