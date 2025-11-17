@@ -13,6 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from datetime import datetime
 
+STEP_LOGGING = False
+DEPTH_MAP_LOGGING = False
+
 class DroneObstacleEnv(gym.Env):
     """
     Drone Obstacle Avoidance Environment with VAE + SAC
@@ -119,12 +122,18 @@ class DroneObstacleEnv(gym.Env):
         
         # Thread-safe shared state for observation collection
         self.latest_observation = None
+        self.latest_depth_map = None  # Cache depth map to avoid re-fetching in reward calculation
         self.observation_lock = threading.Lock()
         self.client_lock = threading.Lock()  # Lock for AirSim client (not thread-safe)
         
         # Control flags for background observation thread
         self.observation_thread_running = False
         self.observation_thread = None
+        
+        # Control flags for background depth map thread
+        self.depth_map_thread_running = False
+        self.depth_map_thread = None
+        self.depth_map_interval = 0.2  # Update depth map every 0.2s (faster than observation)
         
         # Observation collection interval 0.2, but simulation runs at x2 clock speed
         self.observation_interval = 0.2
@@ -199,8 +208,11 @@ class DroneObstacleEnv(gym.Env):
         
         # Initialize observation
         observation = self._get_observation()
+        # Also cache the depth map for reward calculation
+        depth_map = self._get_depth_image()
         with self.observation_lock:
             self.latest_observation = observation
+            self.latest_depth_map = depth_map.copy()
         
         # Start background observation thread
         self._start_background_threads()
@@ -215,12 +227,16 @@ class DroneObstacleEnv(gym.Env):
 
     # Gymnasium step function
     def step(self, action: np.ndarray):
-        """Execute one environment step - action executed synchronously, observation collected in background"""
+        """Execute one environment step - loop action while waiting for observation"""
         step_start_time = time.time()
         self.current_step += 1
         
         # Execute action synchronously (thread-safe)
         action_start = time.time()
+
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Action execution START at {action_start:.6f}\n")
+        
         speed_factor, lateral, vertical = action
         
         # Calculate velocities from simplified actions
@@ -229,6 +245,7 @@ class DroneObstacleEnv(gym.Env):
         vertical_velocity = vertical * self.max_vertical_speed
         
         # Send command to AirSim (thread-safe, non-blocking - simulation runs continuously)
+        action_send_start = time.time()
         with self.client_lock:
             self.client.moveByVelocityAsync(
                 float(forward_velocity),
@@ -236,22 +253,49 @@ class DroneObstacleEnv(gym.Env):
                 float(vertical_velocity),
                 duration=0.4  # Command duration 0.4, but simulation runs at x2 clock speed
             )
+        action_send_time = time.time() - action_send_start
+
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Action sent to AirSim in {action_send_time:.6f}s\n")
         
         action_time = time.time() - action_start
         self.component_times['action_execution'].append(action_time)
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Action execution END, Total duration: {action_time:.6f}s\n")
         
         # Get latest observation (collected by background thread)
+        # Log observation timing details
         observation_start = time.time()
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Observation collection START at {observation_start:.6f}\n")
+        
+        lock_acquire_start = time.time()
         with self.observation_lock:
+            lock_acquire_time = time.time() - lock_acquire_start
+            if(STEP_LOGGING):
+                self.log(f"[Step {self.current_step}] Lock acquired in {lock_acquire_time:.6f}s\n")
+            
+            observation_get_start = time.time()
             observation = self.latest_observation.copy() if self.latest_observation is not None else self._get_observation()
-        observation_time = time.time() - observation_start
+            observation_get_time = time.time() - observation_get_start
+            if(STEP_LOGGING):
+                self.log(f"[Step {self.current_step}] Observation retrieved in {observation_get_time:.6f}s\n")
+        
+        observation_end = time.time()
+        observation_time = observation_end - observation_start
         self.component_times['observation'].append(observation_time)
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Observation collection END at {observation_end:.6f}, Total duration: {observation_time:.6f}s\n")
         
         # Calculate reward
         reward_start = time.time()
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Reward calculation START at {reward_start:.6f}\n")
         reward, terminated = self._calculate_reward(observation, action)
         reward_time = time.time() - reward_start
         self.component_times['reward_calculation'].append(reward_time)
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Reward calculation END, Total duration: {reward_time:.6f}s\n")
         
         # Accumulate episode reward
         self.episode_reward_total += float(reward)
@@ -265,6 +309,12 @@ class DroneObstacleEnv(gym.Env):
         step_duration = time.time() - step_start_time
         self.episode_step_times.append(step_duration)
         self.step_times.append(step_duration)
+        
+        # Log step timing summary
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] STEP SUMMARY - Total: {step_duration:.6f}s | "
+                    f"Action: {action_time:.6f}s | Observation: {observation_time:.6f}s | "
+                    f"Reward: {reward_time:.6f}s\n")
         
         # Enhanced timing diagnostics
         if self.current_step % 1000 == 0:
@@ -287,18 +337,28 @@ class DroneObstacleEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def _start_background_threads(self):
-        """Start background thread for observation collection"""
+        """Start background threads for observation collection and depth map updates"""
+        # Start observation collection thread
         self.observation_thread_running = True
-        
         self.observation_thread = threading.Thread(target=self._observation_collection_loop, daemon=True)
         self.observation_thread.start()
         
-    def _stop_background_threads(self):
-        """Stop background thread"""
-        self.observation_thread_running = False
+        # Start depth map collection thread (separate, independent)
+        self.depth_map_thread_running = True
+        self.depth_map_thread = threading.Thread(target=self._depth_map_collection_loop, daemon=True)
+        self.depth_map_thread.start()
         
+    def _stop_background_threads(self):
+        """Stop background threads"""
+        # Stop observation thread
+        self.observation_thread_running = False
         if self.observation_thread is not None:
             self.observation_thread.join(timeout=1.0)
+        
+        # Stop depth map thread
+        self.depth_map_thread_running = False
+        if self.depth_map_thread is not None:
+            self.depth_map_thread.join(timeout=1.0)
     
     def _observation_collection_loop(self):
         """Background thread: Continuously collect observations every 0.1s in parallel"""
@@ -308,9 +368,16 @@ class DroneObstacleEnv(gym.Env):
             # Collect observation in parallel
             observation_start = time.time()
             
-            # Step 1: Get depth map (already thread-safe inside method)
+            # Step 1: Get depth map from cache (updated by depth_map_collection_loop thread)
+            # This avoids duplicate fetching - depth map thread already keeps it fresh
             image_start = time.time()
-            depth_map = self._get_depth_image()
+            with self.observation_lock:
+                if self.latest_depth_map is not None:
+                    depth_map = self.latest_depth_map.copy()  # Use cached depth map
+                else:
+                    # Fallback: fetch if cache not available (shouldn't happen after thread starts)
+                    depth_map = self._get_depth_image()
+                    print("Warning: Depth map cache miss, fetched from AirSim")
             image_time = time.time() - image_start
             self.component_times['image_processing'].append(image_time)
             
@@ -361,15 +428,61 @@ class DroneObstacleEnv(gym.Env):
             ]).astype(np.float32)
             
             # Update latest observation (thread-safe)
+            # Note: Depth map is updated by separate depth_map_collection_loop thread
             with self.observation_lock:
                 self.latest_observation = observation
             
             observation_time = time.time() - observation_start
             self.component_times['observation'].append(observation_time)
             
-            # Sleep to maintain 0.1s interval
+            # Sleep to maintain observation interval
             elapsed = time.time() - loop_start
             sleep_time = max(0, self.observation_interval - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+    
+
+    # Tiger Depth Map Collection Loop: So this background thread can collect depth maps independently of the observation collection thread
+    def _depth_map_collection_loop(self):
+        depth_map_count = 0
+        depth_map_times = []
+        while self.depth_map_thread_running:
+            loop_start = time.time()
+            depth_map_count += 1
+            
+            # get depth map (thread-safe)
+            depth_map_start = time.time()
+            depth_map = self._get_depth_image()
+            depth_map_time = time.time() - depth_map_start
+            depth_map_times.append(depth_map_time)
+            
+            # update cached depth map (thread-safe)
+            #The lock protects self.latest_depth_map, which is accessed by multiple threads:
+            #Depth map thread (line 441): writes self.latest_depth_map = depth_map.copy()
+            #Observation thread (line 359): reads self.latest_depth_map for VAE encoding
+            #Reward calculation (line 692): reads self.latest_depth_map for obstacle reward
+
+            with self.observation_lock:
+                self.latest_depth_map = depth_map.copy()
+            
+            # Print depth map generation speed
+
+            if(DEPTH_MAP_LOGGING):
+                step_info = f" (Step {self.current_step})" if hasattr(self, 'current_step') else ""
+                print(f"[DepthMap Thread{step_info}] Depth map #{depth_map_count} generated in {depth_map_time:.6f}s")
+                
+                # Print statistics every 10 depth maps
+                if depth_map_count % 10 == 0:
+                    recent_times = depth_map_times[-10:]
+                    avg_time = np.mean(recent_times)
+                    min_time = np.min(recent_times)
+                    max_time = np.max(recent_times)
+                    depth_maps_per_sec = 1.0 / avg_time if avg_time > 0 else 0
+                    print(f"[DepthMap Thread{step_info}] Stats (last 10): Avg={avg_time:.6f}s, Min={min_time:.6f}s, Max={max_time:.6f}s, Speed={depth_maps_per_sec:.2f} maps/sec")
+                
+            # Sleep to maintain depth map update interval
+            elapsed = time.time() - loop_start
+            sleep_time = max(0, self.depth_map_interval - elapsed)
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
@@ -525,6 +638,8 @@ class DroneObstacleEnv(gym.Env):
 
     def _calculate_reward(self, observation: np.ndarray, action: np.ndarray) -> Tuple[float, bool]:
         """Calculate reward and done flag using relative distance"""
+        reward_func_start = time.time()
+        
         # Extract components from observation
         normalized_relative_distance = observation[32:35]    # normalized relative distance at indices 32-34
         velocity = observation[35:38]                        # velocity at 35-37
@@ -533,15 +648,25 @@ class DroneObstacleEnv(gym.Env):
         client_call_start = time.time()
         
         # Get current position for bounds checking
+        position_start = time.time()
         position = self._get_current_position()
-        
+        position_time = time.time() - position_start
+
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Reward: Get position took {position_time:.6f}s\n")
+
         total_reward = 0.0
         terminated = False
         reward_breakdown = {}
         
         # 1. Check collision (thread-safe)
+        collision_check_start = time.time()
         with self.client_lock:
             collision = self.client.simGetCollisionInfo().has_collided
+        collision_check_time = time.time() - collision_check_start
+
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Reward: Collision check took {collision_check_time:.6f}s\n")
         
         client_call_time = time.time() - client_call_start
         self.component_times['reward_client_calls'].append(client_call_time)
@@ -598,14 +723,38 @@ class DroneObstacleEnv(gym.Env):
         total_reward += progress_reward
         reward_breakdown['progress'] = progress_reward
         
-        # 5. Obstacle reward (tiled approach) - this requires a client call
-        client_call_start = time.time()
-        depth_map = self._get_depth_image()
-        client_call_time = time.time() - client_call_start
-        self.component_times['reward_client_calls'][-1] += client_call_time
+        # 5. Obstacle reward (tiled approach) - reuse cached depth map from observation thread
+        depth_image_start = time.time()
+
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Reward: Getting depth image START at {depth_image_start:.6f}\n")
+        
+        # Use cached depth map from observation thread (no client call needed!)
+        with self.observation_lock:
+            if self.latest_depth_map is not None:
+                depth_map = self.latest_depth_map.copy()
+                if(STEP_LOGGING):
+                    self.log(f"[Step {self.current_step}] Reward: Using cached depth map (no client call!)\n")
+            else:
+                # Fallback: fetch if cache is not available (shouldn't happen normally)
+                if(STEP_LOGGING):
+                    self.log(f"[Step {self.current_step}] Reward: WARNING - Cache miss, fetching depth image\n")
+                client_call_start = time.time()
+                depth_map = self._get_depth_image()
+                client_call_time = time.time() - client_call_start
+                self.component_times['reward_client_calls'][-1] += client_call_time
+        
+        depth_image_time = time.time() - depth_image_start
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Reward: Getting depth image took {depth_image_time:.6f}s\n")
         
         # Pure computation resumes
+        obstacle_calc_start = time.time()
         obstacle_reward = self._calculate_tiled_obstacle_reward(depth_map, velocity)
+        obstacle_calc_time = time.time() - obstacle_calc_start
+
+        if(STEP_LOGGING):
+            self.log(f"[Step {self.current_step}] Reward: Obstacle reward calculation took {obstacle_calc_time:.6f}s\n")
         total_reward += obstacle_reward
         reward_breakdown['obstacle'] = obstacle_reward
         

@@ -279,7 +279,7 @@ def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = Tru
     # Load the model
     try:
         model = SAC.load(model_path, env=env)
-        print(f"? Model loaded successfully\n")
+        print(f"Model loaded successfully\n")
     except Exception as e:
         print(f"ERROR: Failed to load model: {e}")
         env.close()
@@ -330,7 +330,7 @@ def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = Tru
         else:
             result = "MAX STEPS"
         
-        print(f"  ? {result} | Steps: {steps} | Reward: {episode_reward:.2f} | Duration: {episode_duration:.1f}s")
+        print(f"Results: {result} | Steps: {steps} | Reward: {episode_reward:.2f} | Duration: {episode_duration:.1f}s")
         
         episode_rewards.append(episode_reward)
         episode_steps.append(steps)

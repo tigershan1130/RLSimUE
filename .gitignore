@@ -37,3 +37,5 @@ DerivedDataCache/Boot.ddc
 /PythonClient/JHU_MDE_RL_Project/vae_data
 /PythonClient/JHU_MDE_RL_Project/tensorboard_logs
 /PythonClient/JHU_MDE_RL_Project/checkpoints
+/PythonClient/JHU_MDE_RL_Project/eval_logs
+/PythonClient/JHU_MDE_RL_Project/eval_logs
