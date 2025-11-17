@@ -72,9 +72,11 @@ class DroneObstacleEnv(gym.Env):
         ]
 
         # Reward function parameters
-        self.progress_scale = 5.0
+        self.progress_scale = 100.0
         self.obstacle_k = 10.0
         self.previous_normalized_distance = None
+        self.previous_velocity = None  # Track previous velocity for smoothness penalty
+        self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
         
         # Timer reward parameters
         self.speed_reward_scale = 0.5    # Reward for maintaining speed
@@ -195,6 +197,7 @@ class DroneObstacleEnv(gym.Env):
         
         self.current_step = 0
         self.previous_normalized_distance = None
+        self.previous_velocity = None  # Reset velocity tracking
         self.episode_start_time = time.time()
         self.episode_step_times = []
         self.episode_reward_total = 0.0
@@ -766,6 +769,18 @@ class DroneObstacleEnv(gym.Env):
         speed_reward = speed_factor * self.speed_reward_scale
         total_reward += speed_reward
         reward_breakdown['speed'] = speed_reward
+
+        # 6b. Velocity change penalty - penalize large velocity changes to prevent huge shifts
+        # This encourages smooth control by minimizing abrupt velocity changes
+        if self.previous_velocity is not None:
+            # Calculate velocity change (difference between current and previous velocity)
+            velocity_change = np.linalg.norm(velocity - self.previous_velocity)
+            # Penalize large velocity changes
+            velocity_change_penalty = velocity_change * self.velocity_change_penalty_scale
+            total_reward -= velocity_change_penalty
+            reward_breakdown['velocity_change'] = -velocity_change_penalty
+        # Update previous velocity for next step
+        self.previous_velocity = velocity.copy()
         
         # 7. Time penalty - small penalty per step to encourage efficiency
         time_penalty = self.time_penalty_scale
