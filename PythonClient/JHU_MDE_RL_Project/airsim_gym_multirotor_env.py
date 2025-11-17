@@ -443,6 +443,9 @@ class DroneObstacleEnv(gym.Env):
     
 
     # Tiger Depth Map Collection Loop: So this background thread can collect depth maps independently of the observation collection thread
+    # TODO: Fetch Unreal Engine Color Map
+    # TODO: Convert Color Map to Depth Map using Depth Anything 2.0
+    # this whole thread is recorded for timing diagnostics, don't remove any of that code in here.
     def _depth_map_collection_loop(self):
         depth_map_count = 0
         depth_map_times = []
