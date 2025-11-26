@@ -12,6 +12,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import os
 from datetime import datetime
+from depth_anything_v2.dpt import DepthAnythingV2
+
 
 STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
@@ -146,6 +148,20 @@ class DroneObstacleEnv(gym.Env):
         self.log_file = None
         self._setup_logging()  
 
+        # setup depth anything model
+        DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+        model_configs = {
+            'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+            'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+            'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+            'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
+        }
+        encoder = 'vits'
+        self.mde_model = DepthAnythingV2(**model_configs[encoder])
+        state_dict = torch.load(f'checkpoints/depth_anything_v2_{encoder}.pth', map_location="cpu")
+        self.mde_model.load_state_dict(state_dict)
+        self.mde_model = self.mde_model.to(DEVICE).eval()
+
     def _setup_logging(self):
         """Setup logging to file"""
         # Create eval_logs directory if it doesn't exist
@@ -214,7 +230,8 @@ class DroneObstacleEnv(gym.Env):
         # Initialize observation
         observation = self._get_observation()
         # Also cache the depth map for reward calculation
-        depth_map = self._get_depth_image()
+        #depth_map = self._get_depth_image()
+        depth_map = self._get_depth_estimation()
         with self.observation_lock:
             self.latest_observation = observation
             self.latest_depth_map = depth_map.copy()
@@ -381,7 +398,8 @@ class DroneObstacleEnv(gym.Env):
                     depth_map = self.latest_depth_map.copy()  # Use cached depth map
                 else:
                     # Fallback: fetch if cache not available (shouldn't happen after thread starts)
-                    depth_map = self._get_depth_image()
+                    #depth_map = self._get_depth_image()
+                    depth_map = self._get_depth_estimation()
                     print("Warning: Depth map cache miss, fetched from AirSim")
             image_time = time.time() - image_start
             self.component_times['image_processing'].append(image_time)
@@ -460,7 +478,8 @@ class DroneObstacleEnv(gym.Env):
             
             # get depth map (thread-safe)
             depth_map_start = time.time()
-            depth_map = self._get_depth_image()
+            #depth_map = self._get_depth_image()
+            depth_map = self._get_depth_estimation()
             depth_map_time = time.time() - depth_map_start
             depth_map_times.append(depth_map_time)
             
@@ -596,7 +615,8 @@ class DroneObstacleEnv(gym.Env):
         relative_distance = self.target_position - position
         
         # Get depth image and encode with VAE
-        depth_map = self._get_depth_image()
+        #depth_map = self._get_depth_image()
+        depth_map = self._get_depth_estimation()
         vae_latent = self._encode_depth_map(depth_map)
         
         # Normalize observations
@@ -617,6 +637,33 @@ class DroneObstacleEnv(gym.Env):
         ])
         
         return observation.astype(np.float32)
+
+    def _get_rgb_image(self):
+        """Capture standard rgb pixels from airsim"""
+        with self.client_lock:
+            responses = self.client.simGetImages([
+                airsim.ImageRequest(
+                    "0", 
+                    airsim.ImageType.Scene,
+                    pixels_as_float=False, 
+                    compress=False
+                )])
+            
+        response = responses[0]
+        img = np.frombuffer(response.image_data_uint8, dtype=np.uint8)
+        img = img.reshape(response.height, response.width, 3)
+        return img
+    
+    
+    def _get_depth_estimation(self) -> np.ndarray:
+        """get depth estimation from airsim rgb image
+        """
+        rgb_img = self._get_rgb_image()
+        depth = self.mde_model.infer_image(rgb_img[:, :, ::-1])
+        depth = (depth - depth.min()) / (depth.max() - depth.min()) #* 255.0 scaled 0 to 1
+        depth = cv2.resize(depth, (128, 72))
+        #depth = depth.astype(np.uint8)
+        return depth
 
     def _get_depth_image(self) -> np.ndarray:
         """Get depth image from AirSim camera (thread-safe)"""
@@ -760,7 +807,8 @@ class DroneObstacleEnv(gym.Env):
                 if(STEP_LOGGING):
                     self.log(f"[Step {self.current_step}] Reward: WARNING - Cache miss, fetching depth image\n")
                 client_call_start = time.time()
-                depth_map = self._get_depth_image()
+                #depth_map = self._get_depth_image()
+                depth_map = self._get_depth_estimation()
                 client_call_time = time.time() - client_call_start
                 self.component_times['reward_client_calls'][-1] += client_call_time
         
