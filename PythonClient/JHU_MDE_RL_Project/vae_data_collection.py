@@ -55,6 +55,31 @@ class DataCollector:
         except Exception as e:
             print(f"Error getting depth image: {e}")
             return None
+
+    def get_rgb_image(self, camera_name="0"):
+        """Capture depth image from AirSim"""
+        try:
+            responses = self.client.simGetImages([
+                airsim.ImageRequest(
+                    camera_name,
+                    airsim.ImageType.Scene,
+                    compress=False
+                )
+            ])
+
+            if responses and responses[0]:
+                img_rgb = np.frombuffer(responses[0].image_data_uint8, dtype=np.uint8)
+
+                # Reshape the image data to its original dimensions (height, width, 3 for RGB)
+                img_rgb = img_rgb.reshape(responses[0].height, responses[0].width, 3)
+
+                # Convert from BGR to RGB (OpenCV uses BGR by default) if needed for display or further processing
+                img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2RGB)
+                return img_rgb
+            return None
+        except Exception as e:
+            print(f"Error getting rgb image: {e}")
+            return None
     
     def _parse_depth_response(self, response):
         """Parse AirSim depth image response"""
@@ -77,6 +102,7 @@ class DataCollector:
                 return np.zeros((response.height, response.width), dtype=np.float32)
             else:
                 return np.zeros((72, 128), dtype=np.float32)
+
     
     def depth_to_visual(self, depth_image):
         """Convert depth image to visualizable PNG format"""
@@ -93,6 +119,14 @@ class DataCollector:
         npy_path = os.path.join(self.images_dir, f"{filename}.npy")
         depth_normalized = np.clip(depth_image / 100.0, 0.0, 1.0) # IMPORTANT: this is the depth image normalized to 0-1(1meters)
         np.save(npy_path, depth_normalized)
+
+    def save_rgb_image(self, rgb_image, filename):
+        """Save depth image in both PNG (visual) and numpy format"""
+        png_path = os.path.join(self.images_dir, f"{filename}.png")
+        cv2.imwrite(png_path, rgb_image)
+
+        npy_path = os.path.join(self.images_dir, f"{filename}.npy")
+        np.save(npy_path, rgb_image)
     
     def get_height_adjustment(self, current_height):
         """Calculate vertical velocity to maintain ideal height range"""
@@ -219,6 +253,7 @@ class DataCollector:
                 # Capture image at intervals
                 if current_time - last_image_time >= self.image_interval:
                     depth_image = self.get_depth_image()
+                    rgb_image = self.get_rgb_image()
                     
                     if depth_image is not None and depth_image.size > 0:
                         # Resize to standard size (72x128 as in paper)
@@ -228,6 +263,7 @@ class DataCollector:
                         # Save image in both formats
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                         self.save_depth_image(depth_image, f"depth_{timestamp}")
+                        self.save_rgb_image(rgb_image, f"rgb_{timestamp}")
                         
                         collected_images += 1
                         last_image_time = current_time
