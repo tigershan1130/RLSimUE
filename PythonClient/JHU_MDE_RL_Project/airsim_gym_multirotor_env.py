@@ -76,7 +76,8 @@ class DroneObstacleEnv(gym.Env):
         ]
 
         # Reward function parameters
-        self.progress_scale = 100.0
+        self.progress_scale = 2.0
+        self.progress_exponent = 2.0  # Exponent for progress reward (higher = more reward near target)
         self.obstacle_k = 10.0
         self.previous_normalized_distance = None
         self.previous_velocity = None  # Track previous velocity for smoothness penalty
@@ -84,7 +85,7 @@ class DroneObstacleEnv(gym.Env):
         self.overshot_penalty = -50.0  # Penalty for overshooting the target
         
         # Timer reward parameters
-        self.speed_reward_scale = 0.5    # Reward for maintaining speed
+        self.speed_reward_scale = 0.1    # Reward for maintaining speed
         self.time_penalty_scale = 0.01   # Small penalty per step to encourage efficiency
         # Boundary warning distance (meters). Within this distance, apply scaled penalty to -100 at boundary
         self.boundary_warning_distance = 3.0
@@ -140,7 +141,7 @@ class DroneObstacleEnv(gym.Env):
         # Control flags for background depth map thread
         self.depth_map_thread_running = False
         self.depth_map_thread = None
-        self.depth_map_interval = 0.2  # Update depth map every 0.2s (faster than observation)
+        self.depth_map_interval = 0.2  # Update depth map every 0.2s 
         
         # Observation collection interval 0.2, but simulation runs at x2 clock speed
         self.observation_interval = 0.2
@@ -477,10 +478,8 @@ class DroneObstacleEnv(gym.Env):
             #Depth map thread (line 441): writes self.latest_depth_map = depth_map.copy()
             #Observation thread (line 359): reads self.latest_depth_map for VAE encoding
             #Reward calculation (line 692): reads self.latest_depth_map for obstacle reward
-
             with self.observation_lock:
                 self.latest_depth_map = depth_map.copy()
-            
             # Print depth map generation speed
 
             if(DEPTH_MAP_LOGGING):
@@ -815,7 +814,7 @@ class DroneObstacleEnv(gym.Env):
         self.component_times['reward_computation'].append(computation_time)
         
         # Log reward breakdown every 1000 steps ( NO Point of now, too spamming)
-        #if self.current_step % 1000 == 0:
+        #if self.current_step % 10 == 0:
         #    self._log_reward_breakdown(reward_breakdown, total_reward)
         
         return total_reward, terminated
@@ -829,16 +828,25 @@ class DroneObstacleEnv(gym.Env):
         self.log("---\n")
 
     def _calculate_progress_reward(self, normalized_relative_distance: np.ndarray) -> float:
-        """Calculate progress toward target using normalized relative distance"""
+        """Calculate progress reward based on current distance to target (every step)
+        
+        Reward is given every step based on how close we are to the target.
+        Uses exponential scaling: closer = exponentially more reward.
+        This provides continuous feedback and stronger incentive to get very close.
+        """
         current_normalized_distance = np.linalg.norm(normalized_relative_distance)
         
-        if self.previous_normalized_distance is None:
-            reward = 0.0
-        else:
-            # As normalized distance gets smaller, we get positive reward
-            reward = (self.previous_normalized_distance - current_normalized_distance) * self.progress_scale
+        # Exponential reward based on current distance: closer = exponentially more reward
+        # Distance is normalized (0-1), so reward = (1 - distance)^exponent * scale
+        # When distance = 0 (at target): reward = 1^exponent * scale = max reward
+        # When distance = 1 (far): reward = 0^exponent * scale = 0 reward
+        # With exponent > 1, reward increases faster as we get closer
+        closeness = 1.0 - current_normalized_distance
+        reward = (closeness ** self.progress_exponent) * self.progress_scale
         
+        # Also track for logging/debugging
         self.previous_normalized_distance = current_normalized_distance
+        
         return reward
 
     def _calculate_tiled_obstacle_reward(self, depth_map: np.ndarray, velocity: np.ndarray) -> float:
