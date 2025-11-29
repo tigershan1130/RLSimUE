@@ -15,6 +15,7 @@ from datetime import datetime
 
 STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
+FORWARD_ONLY = False
 
 class DroneObstacleEnv(gym.Env):
     """
@@ -46,6 +47,7 @@ class DroneObstacleEnv(gym.Env):
         self.world_bounds = world_bounds  # [x_min, x_max, y_min, y_max, z_min, z_max]
         self.max_steps = max_steps
         self.current_step = 0
+        self._last_dt = 0.03
         
         # SIMPLIFIED: Action space: 3D continuous [speed_factor, lateral, vertical]
         self.action_space = spaces.Box(
@@ -63,9 +65,9 @@ class DroneObstacleEnv(gym.Env):
         )
         
         # Control parameters
-        self.base_forward_speed = 3.0    # m/s (base speed when speed_factor=1)
-        self.max_lateral_speed = 2.0     # m/s
-        self.max_vertical_speed = 2.0    # m/s
+        self.base_forward_speed = 10.0    # m/s (base speed when speed_factor=1)
+        self.max_lateral_speed = 8.0     # m/s
+        self.max_vertical_speed = 8.0    # m/s
         
         # Normalize/validate world bounds ordering (ensure mins <= maxs)
         x_min, x_max, y_min, y_max, z_min, z_max = self.world_bounds
@@ -76,13 +78,15 @@ class DroneObstacleEnv(gym.Env):
         ]
 
         # Reward function parameters
-        self.progress_scale = 2.0
-        self.progress_exponent = 2.0  # Exponent for progress reward (higher = more reward near target)
-        self.obstacle_k = 10.0
+        self.progress_scale = 50.0
+        self.progress_exponent = 1.2  # Exponent for progress reward (higher = more reward near target)
+        self.obstacle_k = 1.0
         self.previous_normalized_distance = None
         self.previous_velocity = None  # Track previous velocity for smoothness penalty
         self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
-        self.overshot_penalty = -50.0  # Penalty for overshooting the target
+        self.velocity_magnitude_penalty = 1.5    # Penalty for larger velocities
+        self.velocity_magnitude_collision_scalar_penalty = 0.5  # Penalty for large velocity collisions
+        self.overshot_penalty = -200.0  # Penalty for overshooting the target
         
         # Timer reward parameters
         self.speed_reward_scale = 0.1    # Reward for maintaining speed
@@ -95,11 +99,13 @@ class DroneObstacleEnv(gym.Env):
         # Small tolerance for boundary checks to avoid false positives at edges
         self.boundary_epsilon = 0.05
 
+        self.start_position = [0.0, 0.0, -3.0]
+
         # Normalization parameters
         self.max_expected_distance = np.linalg.norm(
-            np.array([world_bounds[1] - world_bounds[0], 
-                     world_bounds[3] - world_bounds[2],
-                     world_bounds[5] - world_bounds[4]])
+            np.array([self.target_position[0] - self.start_position[0],
+                     self.target_position[1] - self.start_position[1],
+                     self.target_position[2] - self.start_position[2]])
         )
         self.max_expected_velocity = np.array([
             self.base_forward_speed * 1.5,
@@ -141,7 +147,8 @@ class DroneObstacleEnv(gym.Env):
         # Control flags for background depth map thread
         self.depth_map_thread_running = False
         self.depth_map_thread = None
-        self.depth_map_interval = 0.2  # Update depth map every 0.2s 
+        self.depth_map_interval = 0.2  # Update depth map every 0.2s
+        self._last_step_time = None
         
         # Observation collection interval 0.2, but simulation runs at x2 clock speed
         self.observation_interval = 0.2
@@ -201,9 +208,8 @@ class DroneObstacleEnv(gym.Env):
         
         # Takeoff and set to initial position (thread-safe)
         with self.client_lock:
-            self.client.takeoffAsync().join()
-            start_position = [0.0, 0.0, -3.0]  # x, y, z (z is up, negative in AirSim)
-            self.client.moveToPositionAsync(*start_position, 5).join()
+            self.client.takeoffAsync().join() # x, y, z (z is up, negative in AirSim)
+            self.client.moveToPositionAsync(*self.start_position, 5).join()
         
         self.current_step = 0
         self.previous_normalized_distance = None
@@ -235,6 +241,7 @@ class DroneObstacleEnv(gym.Env):
             self.client.simPause(False)
         
         info = {}
+        self._last_step_time = time.time()
         
         return observation, info
 
@@ -258,6 +265,13 @@ class DroneObstacleEnv(gym.Env):
         self.current_lateral_velocity += lateral * self.max_lateral_speed
         self.current_vertical_velocity += vertical * self.max_vertical_speed
 
+        self.current_forward_velocity = np.clip(self.current_forward_velocity, min=-self.base_forward_speed,max=self.base_forward_speed)
+        self.current_lateral_velocity = np.clip(self.current_lateral_velocity, min=-self.max_lateral_speed,max=self.max_lateral_speed)
+        self.current_vertical_velocity = np.clip(self.current_vertical_velocity, min=-self.max_vertical_speed,max=self.max_vertical_speed)
+
+        if FORWARD_ONLY:
+            self.current_forward_velocity = max(self.current_forward_velocity, 0.0)
+
         # Send command to AirSim (thread-safe, non-blocking - simulation runs continuously)
         action_send_start = time.time()
         with self.client_lock:
@@ -265,7 +279,7 @@ class DroneObstacleEnv(gym.Env):
                 float(self.current_forward_velocity),
                 float(self.current_lateral_velocity),
                 float(self.current_vertical_velocity),
-                duration=0.1  # Command duration 0.4, but simulation runs at x2 clock speed
+                duration=0.07 # Command duration 0.4, but simulation runs at x2 clock speed
             )
         action_send_time = time.time() - action_send_start
 
@@ -341,12 +355,14 @@ class DroneObstacleEnv(gym.Env):
             'terminated': terminated,
             'truncated': truncated
         }
-        
+
+
         # Log episode summary if episode ended
         if terminated or truncated:
             # Keep history for rolling stats
             self.episode_rewards_history.append(self.episode_reward_total)
             self._log_episode_summary(terminated, truncated)
+
         
         return observation, reward, terminated, truncated, info
 
@@ -654,10 +670,12 @@ class DroneObstacleEnv(gym.Env):
     def _calculate_reward(self, observation: np.ndarray, action: np.ndarray) -> Tuple[float, bool]:
         """Calculate reward and done flag using relative distance"""
         reward_func_start = time.time()
+
         
         # Extract components from observation
         normalized_relative_distance = observation[32:35]    # normalized relative distance at indices 32-34
         velocity = observation[35:38]                        # velocity at 35-37
+        velocity_magnitude = np.linalg.norm(velocity)
         
         # Track client call time separately
         client_call_start = time.time()
@@ -689,10 +707,10 @@ class DroneObstacleEnv(gym.Env):
         # Now time pure computation (excluding client calls)
         computation_start = time.time()
         if collision:
-            reward_breakdown['collision'] = -100.0
+            reward_breakdown['collision'] = -200.0
             self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['collision'])
             self.last_termination_reason = 'collision'
-            return -100.0, True
+            return total_reward + reward_breakdown['collision'], True
         
         # 2. Boundary penalty (unified):
         # - If out-of-bounds (min distance <= 0): terminate with -100
@@ -709,12 +727,12 @@ class DroneObstacleEnv(gym.Env):
         ]
         min_distance_to_boundary = float(min(distances_to_boundaries))
         if min_distance_to_boundary <= -self.boundary_epsilon:
-            reward_breakdown['boundary'] = -100.0
+            reward_breakdown['boundary'] = -200.0
             # Add context for debugging unexpected OOB
             self.log(f"OOB: pos={position}, bounds={self.world_bounds}\n")
             self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['boundary'])
             self.last_termination_reason = 'out_of_bounds'
-            return -100.0, True
+            return total_reward + reward_breakdown['boundary'], True
         boundary_penalty = 0.0
         if min_distance_to_boundary < self.boundary_warning_distance:
             safe_ratio = max(0.0, min_distance_to_boundary / self.boundary_warning_distance)
@@ -724,12 +742,14 @@ class DroneObstacleEnv(gym.Env):
         
         # 3. Check target reached (using actual distance)
         distance_magnitude = np.linalg.norm(normalized_relative_distance)
-        if distance_magnitude < 0.02: # 0.02 meters is the threshold for target reached
+        if distance_magnitude < 0.066: # 0.02 meters is the threshold for target reached
             # Bonus for fast completion
             time_bonus = max(0, (self.max_steps - self.current_step) / self.max_steps) * 50.0
             reward_breakdown['target_reached'] = 100.0
             reward_breakdown['time_bonus'] = time_bonus
-            self._log_reward_breakdown(reward_breakdown, 100.0 + time_bonus)
+            # Penalty for completion at high speed
+            reward_breakdown['target_reached'] *= 1. if velocity_magnitude <= 0.5 else max(0., 1 - ((velocity_magnitude - 0.5) / 20.0))
+            self._log_reward_breakdown(reward_breakdown, reward_breakdown['target_reached'] + time_bonus)
             self.last_termination_reason = 'target_reached'
             return 100.0 + time_bonus, True
         
@@ -739,7 +759,7 @@ class DroneObstacleEnv(gym.Env):
         target_x = self.target_position[0]
         
         # Check if we've passed the target (overshot forward)
-        if drone_x > target_x:
+        if drone_x > target_x + 10.:
             # Drone has passed the target on X axis - terminate with negative reward
             reward_breakdown['missed_target'] = self.overshot_penalty
             final_reward = total_reward + self.overshot_penalty
@@ -782,26 +802,18 @@ class DroneObstacleEnv(gym.Env):
         obstacle_reward = self._calculate_tiled_obstacle_reward(depth_map, velocity)
         obstacle_calc_time = time.time() - obstacle_calc_start
 
-        if(STEP_LOGGING):
-            self.log(f"[Step {self.current_step}] Reward: Obstacle reward calculation took {obstacle_calc_time:.6f}s\n")
-        total_reward += obstacle_reward
-        reward_breakdown['obstacle'] = obstacle_reward
-        
-        # 6. Speed reward - encourage maintaining forward speed
-        speed_factor = action[0]  # First action component is speed factor
-        speed_reward = speed_factor * self.speed_reward_scale
-        total_reward += speed_reward
-        reward_breakdown['speed'] = speed_reward
+        # If not only moving forward, the vehicle may have a tendency to optimize reward by moving in the opposite
+        # of any obstacle
+        if FORWARD_ONLY:
+            if(STEP_LOGGING):
+                self.log(f"[Step {self.current_step}] Reward: Obstacle reward calculation took {obstacle_calc_time:.6f}s\n")
+            total_reward += obstacle_reward
+            reward_breakdown['obstacle'] = obstacle_reward
 
-        # 6b. Velocity change penalty - penalize large velocity changes to prevent huge shifts
-        # This encourages smooth control by minimizing abrupt velocity changes
-        if self.previous_velocity is not None:
-            # Calculate velocity change (difference between current and previous velocity)
-            velocity_change = np.linalg.norm(velocity - self.previous_velocity)
-            # Penalize large velocity changes
-            velocity_change_penalty = velocity_change * self.velocity_change_penalty_scale
-            total_reward -= velocity_change_penalty
-            reward_breakdown['velocity_change'] = -velocity_change_penalty
+        # 6. High velocity penalty - Discourage higher velocities. Reward strategy taken from
+        #    https://arxiv.org/pdf/2509.13943
+        total_reward -= velocity_magnitude**2 * self.velocity_magnitude_penalty
+
         # Update previous velocity for next step
         self.previous_velocity = velocity.copy()
         
@@ -812,12 +824,18 @@ class DroneObstacleEnv(gym.Env):
         
         computation_time = time.time() - computation_start
         self.component_times['reward_computation'].append(computation_time)
+
+        if self.current_step >= self.max_steps:
+            return -200.0, terminated
         
         # Log reward breakdown every 1000 steps ( NO Point of now, too spamming)
         #if self.current_step % 10 == 0:
         #    self._log_reward_breakdown(reward_breakdown, total_reward)
+
+        self._last_dt = time.time() - self._last_step_time
+        self._last_step_time = time.time()
         
-        return total_reward, terminated
+        return total_reward * self._last_dt, terminated
 
     def _log_reward_breakdown(self, reward_breakdown: dict, total_reward: float):
         """Log detailed reward breakdown"""
@@ -834,7 +852,7 @@ class DroneObstacleEnv(gym.Env):
         Uses exponential scaling: closer = exponentially more reward.
         This provides continuous feedback and stronger incentive to get very close.
         """
-        current_normalized_distance = np.linalg.norm(normalized_relative_distance)
+        current_normalized_distance = min(float(np.linalg.norm(normalized_relative_distance)), 1.0)
         
         # Exponential reward based on current distance: closer = exponentially more reward
         # Distance is normalized (0-1), so reward = (1 - distance)^exponent * scale
