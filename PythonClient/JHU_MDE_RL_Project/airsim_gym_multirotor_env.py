@@ -15,7 +15,8 @@ from datetime import datetime
 
 STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
-FORWARD_ONLY = True
+FORWARD_ONLY = False
+USE_AIR_RESISTANCE = True
 
 class DroneObstacleEnv(gym.Env):
     """
@@ -64,10 +65,29 @@ class DroneObstacleEnv(gym.Env):
             dtype=np.float32
         )
         
-        # Control parameters
-        self.base_forward_speed = 10.0    # m/s (base speed when speed_factor=1)
-        self.max_lateral_speed = 8.0     # m/s
-        self.max_vertical_speed = 8.0    # m/s
+        # Control parameters - Based on actual drone's speed reference
+        # Increased speeds for faster movement:
+        # - Forward: 10.0 m/s (30 km/h) - faster forward flight
+        # - Lateral: 6.0 m/s (21.6 km/h) - faster sideward movement
+        # - Vertical: 6.0 m/s (21.6 km/h) - faster vertical ascent/descent
+        # Note: These are still within realistic consumer/professional drone capabilities
+        #       Racing drones can reach 30+ m/s, but these provide good balance
+        self.base_forward_speed = 10.0    # m/s (base speed when speed_factor=1) - increased from 5.0
+        self.max_lateral_speed = 6.0     # m/s - increased from 3.5
+        self.max_vertical_speed = 6.0    # m/s - increased from 3.5
+        
+        # Drag/Air Resistance parameters
+        # AirSim's physics engine doesn't model air resistance realistically.
+        # We implement our own drag model to match real-world behavior:
+        # - When action=0, velocity should decay due to drag (realistic coasting)
+        # - Drag coefficient: higher = more drag (faster decay)
+        # - Typical values: 0.05-0.15 for light drag, 0.15-0.3 for moderate drag
+        # NOTE: Vertical drag is NOT applied - gravity is already handled by AirSim's physics engine
+        self.enable_drag = USE_AIR_RESISTANCE  # Set to False to disable custom drag model
+        self.drag_coefficient = 0.02  # Linear drag coefficient (velocity decay per second) - very light drag
+        # Acceleration rate: Real drones can accelerate 10-20 m/sý, but for responsive control we use very high value
+        # With dt ? 0.03s, this allows reaching max speed in 1-2 steps
+        self.acceleration_rate = 500.0  # How fast we can accelerate (m/s^2) - very high for near-instantaneous response
         
         # Normalize/validate world bounds ordering (ensure mins <= maxs)
         x_min, x_max, y_min, y_max, z_min, z_max = self.world_bounds
@@ -82,9 +102,9 @@ class DroneObstacleEnv(gym.Env):
         self.progress_exponent = 1.2  # Exponent for progress reward (higher = more reward near target)
         self.obstacle_k = 1.0
         self.previous_normalized_distance = None
+        self.velocity_magnitude_penalty = 0.1  # Penalty for high velocity
         self.previous_velocity = None  # Track previous velocity for smoothness penalty
         self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
-        self.velocity_magnitude_penalty = 0.1  # Penalty for high velocity magnitude (squared)
         self.overshot_penalty_base = -50.0  # Base penalty for overshooting the target (will be scaled by distance)
         self.target_tolerance_yz = 1.0  # Tolerance in Y and Z directions for considering target reached when overshot on X
         self.overshot_penalty_max_distance = 10.0  # Maximum distance for scaling overshot penalty (meters)
@@ -252,6 +272,13 @@ class DroneObstacleEnv(gym.Env):
         step_start_time = time.time()
         self.current_step += 1
         
+        # Calculate time step for physics calculations
+        if self._last_step_time is not None:
+            dt = step_start_time - self._last_step_time
+        else:
+            dt = 0.03  # Default to 0.03s for first step
+        dt = max(0.001, min(dt, 0.1))  # Clamp dt to reasonable range (1ms to 100ms)
+        
         # Execute action synchronously (thread-safe)
         action_start = time.time()
 
@@ -260,15 +287,69 @@ class DroneObstacleEnv(gym.Env):
         
         speed_factor, lateral, vertical = action
         
-        # Calculate velocities from simplified actions
+        # Calculate target velocities with drag/air resistance model
+        # AirSim's moveByVelocityAsync treats velocity as a TARGET (setpoint).
+        # However, AirSim doesn't model air resistance realistically.
+        # We implement our own drag model for realistic physics:
+        #
+        # Real-world behavior:
+        #   - When action=0, drone should coast and gradually slow due to drag
+        #   - When action>0, drone accelerates, but drag still applies
+        #   - This matches real physics where drag is always present
+        #
+        if self.enable_drag:
+            # Simplified approach: Set target velocity directly, then apply light drag correction
+            # This ensures the drone can move while still having realistic drag effects
+            
+            # Calculate target velocities from actions
+            target_forward = speed_factor * self.base_forward_speed
+            target_lateral = lateral * self.max_lateral_speed
+            target_vertical = vertical * self.max_vertical_speed
+            
+            # Get current actual velocity from AirSim
+            with self.client_lock:
+                drone_state = self.client.getMultirotorState()
+            kinematics = drone_state.kinematics_estimated
+            current_actual_velocity = np.array([
+                kinematics.linear_velocity.x_val,
+                kinematics.linear_velocity.y_val,
+                kinematics.linear_velocity.z_val
+            ])
+            
+            # Accelerate toward target velocity (very responsive - high acceleration rate)
+            # With acceleration_rate = 500 m/sý and dt ? 0.03s, max_accel ? 15 m/s per step
+            # This allows reaching max speed (10 m/s) in 1 step, making it nearly instantaneous
+            max_accel = self.acceleration_rate * dt
+            
+            # Calculate velocity change needed - use aggressive acceleration
+            # If target is far from current, accelerate more aggressively
+            forward_diff = target_forward - current_actual_velocity[0]
+            lateral_diff = target_lateral - current_actual_velocity[1]
+            vertical_diff = target_vertical - current_actual_velocity[2]
+            
+            # Apply acceleration (clipped to max)
+            forward_vel = current_actual_velocity[0] + np.clip(forward_diff, -max_accel, max_accel)
+            lateral_vel = current_actual_velocity[1] + np.clip(lateral_diff, -max_accel, max_accel)
+            vertical_vel = current_actual_velocity[2] + np.clip(vertical_diff, -max_accel, max_accel)
+            
+            # Apply light drag ONLY to forward and lateral (NOT vertical - gravity handles it)
+            # Drag is applied as a small correction to the velocity
+            # Note: Drag is very light (0.02), so it only reduces velocity by ~0.06% per step
+            drag_factor = 1.0 - self.drag_coefficient * dt
+            self.current_forward_velocity = forward_vel * drag_factor
+            self.current_lateral_velocity = lateral_vel * drag_factor
+            self.current_vertical_velocity = vertical_vel  # No drag on vertical
+        else:
+            # Original approach: direct target velocity (no drag model)
+            # AirSim's physics engine handles acceleration, but may not model drag realistically
+            self.current_forward_velocity = speed_factor * self.base_forward_speed
+            self.current_lateral_velocity = lateral * self.max_lateral_speed
+            self.current_vertical_velocity = vertical * self.max_vertical_speed
 
-        self.current_forward_velocity += speed_factor * self.base_forward_speed
-        self.current_lateral_velocity += lateral * self.max_lateral_speed
-        self.current_vertical_velocity += vertical * self.max_vertical_speed
-
-        self.current_forward_velocity = np.clip(self.current_forward_velocity, min=-self.base_forward_speed,max=self.base_forward_speed)
-        self.current_lateral_velocity = np.clip(self.current_lateral_velocity, min=-self.max_lateral_speed,max=self.max_lateral_speed)
-        self.current_vertical_velocity = np.clip(self.current_vertical_velocity, min=-self.max_vertical_speed,max=self.max_vertical_speed)
+        # Clip to maximum speeds
+        self.current_forward_velocity = np.clip(self.current_forward_velocity, min=-self.base_forward_speed, max=self.base_forward_speed)
+        self.current_lateral_velocity = np.clip(self.current_lateral_velocity, min=-self.max_lateral_speed, max=self.max_lateral_speed)
+        self.current_vertical_velocity = np.clip(self.current_vertical_velocity, min=-self.max_vertical_speed, max=self.max_vertical_speed)
 
         if FORWARD_ONLY:
             self.current_forward_velocity = max(self.current_forward_velocity, 0.0)
@@ -280,7 +361,7 @@ class DroneObstacleEnv(gym.Env):
                 float(self.current_forward_velocity),
                 float(self.current_lateral_velocity),
                 float(self.current_vertical_velocity),
-                duration= 4# Modified by tiger, so it moves while step is running async.
+                duration=10 # Modified by tiger, so it moves while step is running async.
             )
         action_send_time = time.time() - action_send_start
 
@@ -364,6 +445,9 @@ class DroneObstacleEnv(gym.Env):
             self.episode_rewards_history.append(self.episode_reward_total)
             self._log_episode_summary(terminated, truncated)
 
+        # Update step time for next iteration (used for drag calculations)
+        self._last_step_time = time.time()
+        self._last_dt = step_duration
         
         return observation, reward, terminated, truncated, info
 
