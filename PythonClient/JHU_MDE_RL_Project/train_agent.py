@@ -6,7 +6,7 @@ import glob
 import argparse
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback, BaseCallback
+from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from airsim_gym_multirotor_env import DroneObstacleEnv
 import torch
@@ -14,7 +14,7 @@ import torch
 class TrainingCallback(BaseCallback):
     """Simple callback for tracking training progress with debug info"""
     def __init__(self, check_freq: int = 1000, debug_freq: int = 50, 
-                 save_episode_freq: int = 20, save_path: str = "./checkpoints/", verbose: int = 1):
+                 save_episode_freq: int = 100, save_path: str = "./checkpoints/", verbose: int = 1):
         super(TrainingCallback, self).__init__(verbose)
         self.check_freq = check_freq
         self.debug_freq = debug_freq
@@ -54,10 +54,23 @@ class TrainingCallback(BaseCallback):
                 self.model.save(episode_model_path)
                 print(f"\nModel saved at episode {self.episode_count}: {episode_model_path}")
                 
+                # Also save replay buffer
+                replay_buffer_path = os.path.join(self.save_path, f"episode_{self.episode_count}_replay_buffer.pkl")
+                try:
+                    self.model.replay_buffer.save(replay_buffer_path)
+                    print(f"Replay buffer saved: {replay_buffer_path} ({len(self.model.replay_buffer)} experiences)")
+                except Exception as e:
+                    print(f"Warning: Could not save replay buffer: {e}")
+                
                 # Also save as "latest" for easy resuming
                 latest_model_path = os.path.join(self.save_path, "latest_model")
+                latest_replay_buffer_path = os.path.join(self.save_path, "latest_replay_buffer.pkl")
                 self.model.save(latest_model_path)
-                print(f"Latest model updated: {latest_model_path}")
+                try:
+                    self.model.replay_buffer.save(latest_replay_buffer_path)
+                    print(f"Latest model and replay buffer updated: {latest_model_path}")
+                except Exception as e:
+                    print(f"Warning: Could not save latest replay buffer: {e}")
             
             if self.episode_count % 10 == 0:
                 mean_reward = np.mean(self.episode_rewards[-10:])
@@ -189,6 +202,20 @@ def setup_training(resume_from_checkpoint: bool = True):
                 model = SAC.load(latest_checkpoint, env=env)
                 starting_episode = episode_num
                 print(f"Successfully loaded model from episode {episode_num}")
+                
+                # Optional: Load replay buffer (not strictly necessary - model weights already encode learned knowledge)
+                # Loading buffer allows immediate learning without waiting for buffer to fill
+                latest_replay_buffer_path = os.path.join(checkpoint_dir, "latest_replay_buffer.pkl")
+                if os.path.exists(latest_replay_buffer_path):
+                    try:
+                        model.replay_buffer.load(latest_replay_buffer_path)
+                        print(f"Replay buffer loaded: {latest_replay_buffer_path} ({len(model.replay_buffer)} experiences)")
+                        print("  Note: Model weights already encode learned knowledge. Buffer provides immediate learning.")
+                    except Exception as e:
+                        print(f"Warning: Could not load replay buffer: {e}")
+                        print("Continuing with empty replay buffer (will collect new experiences)...")
+                else:
+                    print("No replay buffer found - will collect new experiences (model weights are already loaded)")
             except Exception as e:
                 print(f"Failed to load checkpoint: {e}")
                 print("Starting fresh training...")
@@ -216,17 +243,11 @@ def setup_training(resume_from_checkpoint: bool = True):
         )
     
     # Callbacks
-    checkpoint_callback = CheckpointCallback(
-        save_freq=10000,
-        save_path=checkpoint_dir,
-        name_prefix="drone_sac"
-    )
-    
-    # Training callback with episode-based saving (every 20 episodes)
+    # Training callback with episode-based saving (includes replay buffer)
     training_callback = TrainingCallback(
         check_freq=1000, 
         debug_freq=50,
-        save_episode_freq=20,
+        save_episode_freq=100,
         save_path=checkpoint_dir
     )
     
@@ -234,7 +255,7 @@ def setup_training(resume_from_checkpoint: bool = True):
     if starting_episode > 0:
         training_callback.episode_count = starting_episode
     
-    callbacks = [checkpoint_callback, training_callback]
+    callbacks = [training_callback]
     
     return model, env, callbacks
 
@@ -354,22 +375,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train or test a SAC drone obstacle avoidance agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Train the model (default behavior)
-  python train_agent.py
-  
-  # Test a specific model (e.g., episode 20)
-  python train_agent.py --test checkpoints/episode_20_model.zip
-  
-  # Test with multiple episodes
-  python train_agent.py --test checkpoints/episode_400_model.zip --episodes 5
-  
-  # Test with stochastic policy (non-deterministic)
-  python train_agent.py --test checkpoints/episode_400_model.zip --stochastic
-  
-  # List available models
-  python train_agent.py --list-models
+        epilog=
+        """
+        Examples:
+        # Train the model (default behavior)
+        python train_agent.py
+        
+        # Test a specific model (e.g., episode 100)
+        python train_agent.py --test checkpoints/episode_100_model.zip
+        
+        # Test with multiple episodes
+        python train_agent.py --test checkpoints/episode_400_model.zip --episodes 5
+        
+        # Test with stochastic policy (non-deterministic)
+        python train_agent.py --test checkpoints/episode_400_model.zip --stochastic
+        
+        # List available models
+        python train_agent.py --list-models
         """
     )
     
@@ -377,7 +399,7 @@ Examples:
         "--test",
         type=str,
         default=None,
-        help="Path to model file to test (e.g., 'checkpoints/episode_20_model.zip'). If specified, runs in test mode only."
+        help="Path to model file to test (e.g., 'checkpoints/episode_100_model.zip'). If specified, runs in test mode only."
     )
     
     parser.add_argument(
@@ -461,7 +483,7 @@ Examples:
         
         print(f"\nTraining Configuration:")
         print(f"  Target: [50.0, 0.0, -3.0]")
-        print(f"  Checkpoint saving: Every 20 episodes")
+        print(f"  Episode-based saving: Every 100 episodes (with replay buffer)")
         print(f"  Resume from checkpoint: {'Enabled' if resume else 'Disabled'}")
         
         # Train the model

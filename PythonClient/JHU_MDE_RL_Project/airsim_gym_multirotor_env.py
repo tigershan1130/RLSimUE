@@ -78,7 +78,9 @@ class DroneObstacleEnv(gym.Env):
         self.previous_normalized_distance = None
         self.previous_velocity = None  # Track previous velocity for smoothness penalty
         self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
-        self.overshot_penalty = -50.0  # Penalty for overshooting the target
+        self.overshot_penalty_base = -50.0  # Base penalty for overshooting the target (will be scaled by distance)
+        self.target_tolerance_yz = 1.0  # Tolerance in Y and Z directions for considering target reached when overshot on X
+        self.overshot_penalty_max_distance = 10.0  # Maximum distance for scaling overshot penalty (meters)
         
         # Timer reward parameters
         self.speed_reward_scale = 0.1    # Reward for maintaining speed
@@ -713,30 +715,64 @@ class DroneObstacleEnv(gym.Env):
             total_reward += boundary_penalty
         reward_breakdown['boundary'] = boundary_penalty
         
-        # 3. Check target reached (using actual distance)
-        distance_magnitude = np.linalg.norm(normalized_relative_distance)
-        if distance_magnitude < 0.02: # 0.02 meters is the threshold for target reached
+        # 3. Check target reached with falloff: if overshot on X but close in Y and Z, consider it target reached
+        # Calculate actual (non-normalized) relative distance
+        relative_distance = self.target_position - position
+        drone_x = position[0]
+        target_x = self.target_position[0]
+        
+        # Check if we've passed the target on X axis (overshot forward)
+        if drone_x > target_x:
+            # Falloff: if Y and Z directions are very close to target, we actually hit the target
+            # This rewards the agent for getting close even if it overshoots slightly on X
+            y_distance = abs(relative_distance[1])
+            z_distance = abs(relative_distance[2])
+            
+            if y_distance < self.target_tolerance_yz and z_distance < self.target_tolerance_yz:
+                # Close enough in Y and Z - consider it target reached!
+                time_bonus = max(0, (self.max_steps - self.current_step) / self.max_steps) * 50.0
+                reward_breakdown['target_reached'] = 100.0
+                reward_breakdown['time_bonus'] = time_bonus
+                self._log_reward_breakdown(reward_breakdown, total_reward + 100.0 + time_bonus)
+                self.last_termination_reason = 'target_reached'
+                return total_reward + 100.0 + time_bonus, True
+            else:
+                # Overshot on X and not close enough in Y/Z - missed target
+                # Penalty scales with distance: closer = smaller penalty, farther = larger penalty
+                # Use Y/Z distance since X is already overshot
+                yz_distance = np.sqrt(y_distance**2 + z_distance**2)
+                
+                # Scale penalty based on distance: 
+                # - At tolerance distance (1.0m): minimum penalty (e.g., -10)
+                # - At max_distance (10.0m): maximum penalty (base penalty, e.g., -50)
+                # Linear interpolation between tolerance and max_distance
+                if yz_distance <= self.target_tolerance_yz:
+                    # Shouldn't reach here (handled above), but just in case
+                    penalty_scale = 0.2  # 20% of base penalty
+                else:
+                    # Scale from tolerance to max_distance
+                    distance_ratio = min(1.0, (yz_distance - self.target_tolerance_yz) / 
+                                       (self.overshot_penalty_max_distance - self.target_tolerance_yz))
+                    # Penalty scales from 0.2 (at tolerance) to 1.0 (at max_distance)
+                    penalty_scale = 0.2 + 0.8 * distance_ratio
+                
+                overshot_penalty = self.overshot_penalty_base * penalty_scale
+                reward_breakdown['missed_target'] = overshot_penalty
+                final_reward = total_reward + overshot_penalty
+                self._log_reward_breakdown(reward_breakdown, final_reward)
+                self.last_termination_reason = 'missed_target_overshot_x'
+                return final_reward, True  # Return True to terminate episode, Gymnasium will call reset()
+        
+        # Also check if we're very close to target (before overshooting) - this handles the case where we approach from behind
+        distance_magnitude = np.linalg.norm(relative_distance)
+        if distance_magnitude < 0.02:  # 0.02 meters is the threshold for target reached
             # Bonus for fast completion
             time_bonus = max(0, (self.max_steps - self.current_step) / self.max_steps) * 50.0
             reward_breakdown['target_reached'] = 100.0
             reward_breakdown['time_bonus'] = time_bonus
-            self._log_reward_breakdown(reward_breakdown, 100.0 + time_bonus)
+            self._log_reward_breakdown(reward_breakdown, total_reward + 100.0 + time_bonus)
             self.last_termination_reason = 'target_reached'
-            return 100.0 + time_bonus, True
-        
-        # 3b. Check if drone has overshot target on X axis
-        # Target is at x=50.0, drone starts at x=0.0, so if drone x > 50.0, it has overshot
-        drone_x = position[0]
-        target_x = self.target_position[0]
-        
-        # Check if we've passed the target (overshot forward)
-        if drone_x > target_x:
-            # Drone has passed the target on X axis - terminate with negative reward
-            reward_breakdown['missed_target'] = self.overshot_penalty
-            final_reward = total_reward + self.overshot_penalty
-            self._log_reward_breakdown(reward_breakdown, final_reward)
-            self.last_termination_reason = 'missed_target_overshot_x'
-            return final_reward, True  # Return True to terminate episode, Gymnasium will call reset()
+            return total_reward + 100.0 + time_bonus, True
         
         # 4. Progress reward using normalized relative distance
         progress_reward = self._calculate_progress_reward(normalized_relative_distance)
