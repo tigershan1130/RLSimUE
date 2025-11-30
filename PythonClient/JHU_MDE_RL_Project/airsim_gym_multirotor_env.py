@@ -15,7 +15,7 @@ from datetime import datetime
 
 STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
-FORWARD_ONLY = False
+FORWARD_ONLY = True
 USE_AIR_RESISTANCE = True
 
 class DroneObstacleEnv(gym.Env):
