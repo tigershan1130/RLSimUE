@@ -15,7 +15,7 @@ from datetime import datetime
 
 STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
-FORWARD_ONLY = False
+FORWARD_ONLY = True
 
 class DroneObstacleEnv(gym.Env):
     """
@@ -84,6 +84,7 @@ class DroneObstacleEnv(gym.Env):
         self.previous_normalized_distance = None
         self.previous_velocity = None  # Track previous velocity for smoothness penalty
         self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
+        self.velocity_magnitude_penalty = 0.1  # Penalty for high velocity magnitude (squared)
         self.overshot_penalty_base = -50.0  # Base penalty for overshooting the target (will be scaled by distance)
         self.target_tolerance_yz = 1.0  # Tolerance in Y and Z directions for considering target reached when overshot on X
         self.overshot_penalty_max_distance = 10.0  # Maximum distance for scaling overshot penalty (meters)
@@ -279,7 +280,7 @@ class DroneObstacleEnv(gym.Env):
                 float(self.current_forward_velocity),
                 float(self.current_lateral_velocity),
                 float(self.current_vertical_velocity),
-                duration=0.07 # Command duration 0.4, but simulation runs at x2 clock speed
+                duration= 4# Modified by tiger, so it moves while step is running async.
             )
         action_send_time = time.time() - action_send_start
 

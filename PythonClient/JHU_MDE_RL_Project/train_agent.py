@@ -169,7 +169,7 @@ def setup_training(resume_from_checkpoint: bool = True):
     """Setup and train the SAC agent"""
     
     # Environment parameters
-    target_position = np.array([15.0, 0.0, -3.0])
+    target_position = np.array([40.0, 0.0, -3.0])
     world_bounds = [-15, 70, -15, 15, -15, 0]
     vae_model_path = "./vae_data/vae_final.pth"
     
@@ -285,7 +285,7 @@ def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = Tru
         return
     
     # Environment parameters (same as training)
-    target_position = np.array([15.0, 0.0, -3.0])
+    target_position = np.array([40.0, 0.0, -3.0])
     world_bounds = [-15, 70, -15, 15, -15, 0]
     vae_model_path = "vae_data/vae_best.pth"
     
