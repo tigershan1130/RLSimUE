@@ -17,23 +17,23 @@ STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
 FORWARD_ONLY = True
 USE_AIR_RESISTANCE = True
+REWARD_LOGGING = False  # Set to True to log rewards per step
+REWARD_LOG_FREQUENCY = 1  # Log every N steps (1 = every step, 10 = every 10 steps, etc.)
 
 class DroneObstacleEnv(gym.Env):
     """
     Drone Obstacle Avoidance Environment with VAE + SAC
-    Action space: [speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate]
-    - speed_factor: forward/backward speed (-1 to 1)
-    - lateral: left/right movement (-1 to 1)
-    - vertical: up/down movement (-1 to 1)
-    - pitch_rate: pitch rotation rate in rad/s (-1 to 1, scaled)
-    - roll_rate: roll rotation rate in rad/s (-1 to 1, scaled)
-    - yaw_rate: yaw rotation rate in rad/s (-1 to 1, scaled)
+    SIMPLIFIED: Continuous action space: [speed_factor, lateral, vertical]
     Observation space: [VAE_latent(32) + relative_distance(3) + velocity(3)] = 38D
     """
     
     def __init__(self, vae_model_path: str, target_position: np.ndarray, 
                  world_bounds: list, max_steps: int = 1000):
         super(DroneObstacleEnv, self).__init__()
+        
+        # Reward logging configuration
+        self.reward_logging_enabled = REWARD_LOGGING
+        self.reward_log_frequency = REWARD_LOG_FREQUENCY
         
         # AirSim connection
         self.client = airsim.MultirotorClient()
@@ -56,17 +56,12 @@ class DroneObstacleEnv(gym.Env):
         self.current_step = 0
         self._last_dt = 0.03
         
-        # Action space: 6D continuous [speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate]
+        # SIMPLIFIED: Action space: 3D continuous [speed_factor, lateral, vertical]
         self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0]),
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            low=np.array([-1.0, -1.0, -1.0]),
+            high=np.array([1.0, 1.0, 1.0]),
             dtype=np.float32
         )
-        
-        # Attitude control parameters (angle rates in rad/s)
-        self.max_pitch_rate = 1.0  # rad/s - maximum pitch rotation rate
-        self.max_roll_rate = 1.0   # rad/s - maximum roll rotation rate
-        self.max_yaw_rate = 1.0    # rad/s - maximum yaw rotation rate
         
         # Observation space: 38D continuous
         self.observation_space = spaces.Box(
@@ -109,7 +104,7 @@ class DroneObstacleEnv(gym.Env):
         ]
 
         # Reward function parameters
-        self.progress_scale = 50.0
+        self.progress_scale = 100.0
         self.progress_exponent = 1.2  # Exponent for progress reward (higher = more reward near target)
         self.obstacle_k = 1.0
         self.previous_normalized_distance = None
@@ -252,6 +247,12 @@ class DroneObstacleEnv(gym.Env):
         self.component_times = {k: [] for k in self.component_times.keys()}
         self.last_termination_reason = None
         
+        # Track initial distance for progress reward calculation at episode end
+        initial_position = self._get_current_position()
+        initial_relative_distance = self.target_position - initial_position
+        self.initial_distance = np.linalg.norm(initial_relative_distance)
+        self.initial_normalized_distance = min(self.initial_distance / self.max_expected_distance, 1.0)
+        
         # Draw target visualization (thread-safe)
         self._draw_target_visualization()
         # Draw world bounds wireframe for debugging
@@ -296,13 +297,7 @@ class DroneObstacleEnv(gym.Env):
         if(STEP_LOGGING):
             self.log(f"[Step {self.current_step}] Action execution START at {action_start:.6f}\n")
         
-        # Parse action: [speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate]
-        if len(action) >= 6:
-            speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate = action[:6]
-        else:
-            # Backward compatibility: if only 3 actions provided, use velocity control only
-            speed_factor, lateral, vertical = action[:3]
-            pitch_rate, roll_rate, yaw_rate = 0.0, 0.0, 0.0
+        speed_factor, lateral, vertical = action
         
         # Calculate target velocities with drag/air resistance model
         # AirSim's moveByVelocityAsync treats velocity as a TARGET (setpoint).
@@ -432,6 +427,31 @@ class DroneObstacleEnv(gym.Env):
         if truncated:
             self.last_termination_reason = 'time_limit'
         
+        # Add progress reward at episode end (sparse reward)
+        progress_reward = 0.0
+        final_distance = None
+        if terminated or truncated:
+            # Calculate final distance
+            final_position = self._get_current_position()
+            final_relative_distance = self.target_position - final_position
+            final_distance = np.linalg.norm(final_relative_distance)
+            final_normalized_distance = min(final_distance / self.max_expected_distance, 1.0)
+            
+            # Calculate progress: how much closer did we get?
+            # Progress = (initial_distance - final_distance) / initial_distance
+            # This gives a value between 0 (no progress) and 1 (reached target)
+            if self.initial_distance > 0:
+                progress_ratio = (self.initial_distance - final_distance) / self.initial_distance
+                progress_ratio = max(0.0, min(1.0, progress_ratio))  # Clamp to [0, 1]
+                
+                # Apply exponential scaling for progress reward
+                # More progress = exponentially more reward
+                progress_reward = (progress_ratio ** self.progress_exponent) * self.progress_scale
+                
+                # Add progress reward to this step's reward and episode total
+                reward += progress_reward
+                self.episode_reward_total += progress_reward
+        
         # Calculate total step time
         step_duration = time.time() - step_start_time
         self.episode_step_times.append(step_duration)
@@ -454,7 +474,10 @@ class DroneObstacleEnv(gym.Env):
             'terminated': terminated,
             'truncated': truncated
         }
-
+        
+        # Log progress reward if episode ended
+        if (terminated or truncated) and progress_reward > 0 and final_distance is not None:
+            self.log(f"[Episode End] Progress Reward: {progress_reward:.3f} (initial_dist: {self.initial_distance:.2f}m, final_dist: {final_distance:.2f}m)\n")
 
         # Log episode summary if episode ended
         if terminated or truncated:
@@ -905,10 +928,8 @@ class DroneObstacleEnv(gym.Env):
             self.last_termination_reason = 'target_reached'
             return total_reward + 100.0 + time_bonus, True
         
-        # 4. Progress reward using normalized relative distance
-        progress_reward = self._calculate_progress_reward(normalized_relative_distance)
-        total_reward += progress_reward
-        reward_breakdown['progress'] = progress_reward
+        # 4. Progress reward is now calculated at episode end (not per step)
+        # Removed per-step progress reward to make it sparse
         
         # 5. Obstacle reward (tiled approach) - reuse cached depth map from observation thread
         depth_image_start = time.time()
@@ -985,6 +1006,10 @@ class DroneObstacleEnv(gym.Env):
         min_reward_per_step = -100.0  # Minimum reward per step (before clipping)
         clipped_reward = np.clip(total_reward, min_reward_per_step, max_reward_per_step)
         
+        # Log reward per step (if enabled)
+        if self.reward_logging_enabled and self.current_step % self.reward_log_frequency == 0:
+            self._log_step_reward(clipped_reward, total_reward, reward_breakdown)
+        
         return clipped_reward, terminated  # FIXED - consistent reward per step with clipping
 
     def _log_reward_breakdown(self, reward_breakdown: dict, total_reward: float):
@@ -994,6 +1019,15 @@ class DroneObstacleEnv(gym.Env):
         for component, value in reward_breakdown.items():
             self.log(f"  {component}: {value:.3f}\n")
         self.log("---\n")
+    
+    def _log_step_reward(self, clipped_reward: float, raw_reward: float, reward_breakdown: dict):
+        """Log reward per step (simpler format for frequent logging)"""
+        # Simple one-line log for per-step rewards
+        breakdown_str = ", ".join([f"{k}: {v:.2f}" for k, v in reward_breakdown.items() if abs(v) > 0.01])
+        if breakdown_str:
+            self.log(f"[Step {self.current_step}] Reward: {clipped_reward:.3f} (raw: {raw_reward:.3f}) | {breakdown_str}\n")
+        else:
+            self.log(f"[Step {self.current_step}] Reward: {clipped_reward:.3f} (raw: {raw_reward:.3f})\n")
 
     def _calculate_progress_reward(self, normalized_relative_distance: np.ndarray) -> float:
         """Calculate progress reward based on current distance to target (every step)
