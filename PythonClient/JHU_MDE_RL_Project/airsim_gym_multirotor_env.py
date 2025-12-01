@@ -21,7 +21,13 @@ USE_AIR_RESISTANCE = True
 class DroneObstacleEnv(gym.Env):
     """
     Drone Obstacle Avoidance Environment with VAE + SAC
-    SIMPLIFIED: Continuous action space: [speed_factor, lateral, vertical]
+    Action space: [speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate]
+    - speed_factor: forward/backward speed (-1 to 1)
+    - lateral: left/right movement (-1 to 1)
+    - vertical: up/down movement (-1 to 1)
+    - pitch_rate: pitch rotation rate in rad/s (-1 to 1, scaled)
+    - roll_rate: roll rotation rate in rad/s (-1 to 1, scaled)
+    - yaw_rate: yaw rotation rate in rad/s (-1 to 1, scaled)
     Observation space: [VAE_latent(32) + relative_distance(3) + velocity(3)] = 38D
     """
     
@@ -50,12 +56,17 @@ class DroneObstacleEnv(gym.Env):
         self.current_step = 0
         self._last_dt = 0.03
         
-        # SIMPLIFIED: Action space: 3D continuous [speed_factor, lateral, vertical]
+        # Action space: 6D continuous [speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate]
         self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0, -1.0]),
-            high=np.array([1.0, 1.0, 1.0]),
+            low=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0]),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
             dtype=np.float32
         )
+        
+        # Attitude control parameters (angle rates in rad/s)
+        self.max_pitch_rate = 1.0  # rad/s - maximum pitch rotation rate
+        self.max_roll_rate = 1.0   # rad/s - maximum roll rotation rate
+        self.max_yaw_rate = 1.0    # rad/s - maximum yaw rotation rate
         
         # Observation space: 38D continuous
         self.observation_space = spaces.Box(
@@ -285,7 +296,13 @@ class DroneObstacleEnv(gym.Env):
         if(STEP_LOGGING):
             self.log(f"[Step {self.current_step}] Action execution START at {action_start:.6f}\n")
         
-        speed_factor, lateral, vertical = action
+        # Parse action: [speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate]
+        if len(action) >= 6:
+            speed_factor, lateral, vertical, pitch_rate, roll_rate, yaw_rate = action[:6]
+        else:
+            # Backward compatibility: if only 3 actions provided, use velocity control only
+            speed_factor, lateral, vertical = action[:3]
+            pitch_rate, roll_rate, yaw_rate = 0.0, 0.0, 0.0
         
         # Calculate target velocities with drag/air resistance model
         # AirSim's moveByVelocityAsync treats velocity as a TARGET (setpoint).
@@ -792,10 +809,12 @@ class DroneObstacleEnv(gym.Env):
         # Now time pure computation (excluding client calls)
         computation_start = time.time()
         if collision:
-            reward_breakdown['collision'] = -200.0
-            self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['collision'])
+            # Reduced penalty to reduce variance (still large enough to discourage)
+            reward_breakdown['collision'] = -100.0  # Reduced from -200.0
+            final_reward = total_reward + reward_breakdown['collision']
+            self._log_reward_breakdown(reward_breakdown, final_reward)
             self.last_termination_reason = 'collision'
-            return total_reward + reward_breakdown['collision'], True
+            return final_reward, True
         
         # 2. Boundary penalty (unified):
         # - If out-of-bounds (min distance <= 0): terminate with -100
@@ -812,12 +831,14 @@ class DroneObstacleEnv(gym.Env):
         ]
         min_distance_to_boundary = float(min(distances_to_boundaries))
         if min_distance_to_boundary <= -self.boundary_epsilon:
-            reward_breakdown['boundary'] = -200.0
+            # Reduced penalty to reduce variance (still large enough to discourage)
+            reward_breakdown['boundary'] = -100.0  # Reduced from -200.0
             # Add context for debugging unexpected OOB
             self.log(f"OOB: pos={position}, bounds={self.world_bounds}\n")
-            self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['boundary'])
+            final_reward = total_reward + reward_breakdown['boundary']
+            self._log_reward_breakdown(reward_breakdown, final_reward)
             self.last_termination_reason = 'out_of_bounds'
-            return total_reward + reward_breakdown['boundary'], True
+            return final_reward, True
         boundary_penalty = 0.0
         if min_distance_to_boundary < self.boundary_warning_distance:
             safe_ratio = max(0.0, min_distance_to_boundary / self.boundary_warning_distance)
@@ -943,7 +964,8 @@ class DroneObstacleEnv(gym.Env):
         self.component_times['reward_computation'].append(computation_time)
 
         if self.current_step >= self.max_steps:
-            return -200.0, terminated
+            # Reduced penalty for time limit to reduce variance
+            return -100.0, terminated  # Reduced from -200.0
         
         # Log reward breakdown every 1000 steps ( NO Point of now, too spamming)
         #if self.current_step % 10 == 0:
@@ -952,7 +974,18 @@ class DroneObstacleEnv(gym.Env):
         self._last_dt = time.time() - self._last_step_time
         self._last_step_time = time.time()
         
-        return total_reward * self._last_dt, terminated
+        # FIXED: Don't multiply reward by dt - this causes high variance!
+        # The reward should be consistent per step, not scaled by timing variations
+        # If you need time-based rewards, normalize by a fixed timestep (e.g., 0.03s)
+        # return total_reward * self._last_dt, terminated  # OLD - causes variance
+        
+        # Clip reward to reduce variance from extreme values
+        # This prevents large reward spikes from destabilizing learning
+        max_reward_per_step = 100.0  # Maximum reward per step (before clipping)
+        min_reward_per_step = -100.0  # Minimum reward per step (before clipping)
+        clipped_reward = np.clip(total_reward, min_reward_per_step, max_reward_per_step)
+        
+        return clipped_reward, terminated  # FIXED - consistent reward per step with clipping
 
     def _log_reward_breakdown(self, reward_breakdown: dict, total_reward: float):
         """Log detailed reward breakdown"""

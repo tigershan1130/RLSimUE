@@ -141,10 +141,11 @@ class TrainingCallback(BaseCallback):
 
 def find_latest_checkpoint(checkpoint_dir: str = "./checkpoints/"):
     """Find the latest checkpoint model to resume training from"""
-    # First check for "latest_model"
+    # First check for "latest_model" - this is the most recent checkpoint
     latest_model_path = os.path.join(checkpoint_dir, "latest_model.zip")
     if os.path.exists(latest_model_path):
         # Find the episode number from the most recent episode model
+        # This tells us what episode we're resuming from
         episode_models = glob.glob(os.path.join(checkpoint_dir, "episode_*_model.zip"))
         if episode_models:
             # Extract episode numbers and find the max
@@ -154,14 +155,33 @@ def find_latest_checkpoint(checkpoint_dir: str = "./checkpoints/"):
                     # Extract episode number from filename like "episode_20_model.zip"
                     filename = os.path.basename(model_path)
                     episode_num = int(filename.split("_")[1])
-                    episode_numbers.append((episode_num, model_path))
+                    episode_numbers.append(episode_num)
                 except (ValueError, IndexError):
                     continue
             
             if episode_numbers:
-                # Return the most recent episode model
-                latest_episode, latest_path = max(episode_numbers, key=lambda x: x[0])
-                return latest_path, latest_episode
+                # Use latest_model.zip (most recent) but get episode number from episode models
+                latest_episode = max(episode_numbers)
+                return latest_model_path, latest_episode
+        else:
+            # If latest_model.zip exists but no episode models, assume episode 0
+            return latest_model_path, 0
+    
+    # Fallback: if no latest_model.zip, try to find the most recent episode model
+    episode_models = glob.glob(os.path.join(checkpoint_dir, "episode_*_model.zip"))
+    if episode_models:
+        episode_numbers = []
+        for model_path in episode_models:
+            try:
+                filename = os.path.basename(model_path)
+                episode_num = int(filename.split("_")[1])
+                episode_numbers.append((episode_num, model_path))
+            except (ValueError, IndexError):
+                continue
+        
+        if episode_numbers:
+            latest_episode, latest_path = max(episode_numbers, key=lambda x: x[0])
+            return latest_path, latest_episode
     
     return None, 0
 
@@ -227,19 +247,21 @@ def setup_training(resume_from_checkpoint: bool = True):
         model = SAC(
             "MlpPolicy",
             env,
-            learning_rate=3e-4,
+            learning_rate=1e-4,  # Reduced from 3e-4 for more stable learning
             buffer_size=100000,
             learning_starts=10000,
             batch_size=256,
             tau=0.005,
             gamma=0.99,
-            train_freq=1,
+            train_freq=(1, "step"),  # Train every step (more explicit)
             gradient_steps=1,
-            ent_coef='auto',
+            ent_coef=0.2,  # Fixed entropy coefficient instead of 'auto' for stability
             policy_kwargs=dict(net_arch=[256, 256]),
             verbose=1,
             tensorboard_log="./tensorboard_logs/",
-            seed=42
+            seed=42,
+            target_update_interval=1,  # Update target network every step
+            target_entropy='auto',  # Auto-adjust target entropy but keep ent_coef fixed
         )
     
     # Callbacks
@@ -287,7 +309,7 @@ def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = Tru
     # Environment parameters (same as training)
     target_position = np.array([40.0, 0.0, -3.0])
     world_bounds = [-15, 70, -15, 15, -15, 0]
-    vae_model_path = "vae_data/vae_best.pth"
+    vae_model_path = "./vae_data/vae_final.pth"  # Match training setup
     
     # Create environment
     env = DroneObstacleEnv(
@@ -300,7 +322,35 @@ def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = Tru
     # Load the model
     try:
         model = SAC.load(model_path, env=env)
-        print(f"Model loaded successfully\n")
+        print(f"Model loaded successfully")
+        
+        # Check if replay buffer exists and show info
+        checkpoint_dir = os.path.dirname(model_path) if os.path.dirname(model_path) else "./checkpoints"
+        model_name = os.path.basename(model_path).replace(".zip", "")
+        
+        # Try to find corresponding replay buffer
+        if "latest_model" in model_name:
+            replay_buffer_path = os.path.join(checkpoint_dir, "latest_replay_buffer.pkl")
+        elif "episode_" in model_name:
+            # Extract episode number
+            try:
+                parts = model_name.split("_")
+                episode_num_str = parts[1]
+                replay_buffer_path = os.path.join(checkpoint_dir, f"episode_{episode_num_str}_replay_buffer.pkl")
+            except:
+                replay_buffer_path = None
+        else:
+            replay_buffer_path = None
+        
+        if replay_buffer_path and os.path.exists(replay_buffer_path):
+            try:
+                model.replay_buffer.load(replay_buffer_path)
+                print(f"Replay buffer loaded: {len(model.replay_buffer)} experiences")
+            except Exception as e:
+                print(f"Note: Replay buffer found but not loaded (not needed for testing): {e}")
+        else:
+            print("Note: No replay buffer found (not needed for testing)")
+        print()
     except Exception as e:
         print(f"ERROR: Failed to load model: {e}")
         env.close()
@@ -314,6 +364,21 @@ def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = Tru
             episode_num = parts[1] if len(parts) > 1 else "unknown"
         except:
             pass
+    elif "latest_model" in model_path:
+        # Try to find episode number from latest episode model
+        checkpoint_dir = os.path.dirname(model_path) if os.path.dirname(model_path) else "./checkpoints"
+        episode_models = glob.glob(os.path.join(checkpoint_dir, "episode_*_model.zip"))
+        if episode_models:
+            episode_numbers = []
+            for ep_model_path in episode_models:
+                try:
+                    filename = os.path.basename(ep_model_path)
+                    ep_num = int(filename.split("_")[1])
+                    episode_numbers.append(ep_num)
+                except (ValueError, IndexError):
+                    continue
+            if episode_numbers:
+                episode_num = str(max(episode_numbers))
     
     # Run test episodes
     episode_rewards = []
@@ -384,6 +449,12 @@ def main():
         # Test a specific model (e.g., episode 100)
         python train_agent.py --test checkpoints/episode_100_model.zip
         
+        # Test the latest checkpoint (recommended to verify checkpoint loading)
+        python train_agent.py --test-latest
+        
+        # Test latest with multiple episodes
+        python train_agent.py --test-latest --episodes 5
+        
         # Test with multiple episodes
         python train_agent.py --test checkpoints/episode_400_model.zip --episodes 5
         
@@ -427,6 +498,12 @@ def main():
         help="Start training from scratch (don't resume from checkpoint)"
     )
     
+    parser.add_argument(
+        "--test-latest",
+        action="store_true",
+        help="Test the latest checkpoint model (equivalent to --test checkpoints/latest_model.zip)"
+    )
+    
     args = parser.parse_args()
     
     # List models mode
@@ -452,6 +529,22 @@ def main():
         return
     
     # Test mode
+    if args.test_latest:
+        # Test the latest checkpoint
+        checkpoint_dir = "./checkpoints"
+        latest_checkpoint, episode_num = find_latest_checkpoint(checkpoint_dir)
+        if latest_checkpoint and os.path.exists(latest_checkpoint):
+            print(f"\nTesting latest checkpoint: {latest_checkpoint}")
+            print(f"Resuming from episode {episode_num}\n")
+            test_model(
+                model_path=latest_checkpoint,
+                num_episodes=args.episodes,
+                deterministic=not args.stochastic
+            )
+        else:
+            print("ERROR: No latest checkpoint found. Train a model first or use --test with a specific model path.")
+        return
+    
     if args.test:
         test_model(
             model_path=args.test,
