@@ -54,23 +54,29 @@ class TrainingCallback(BaseCallback):
                 self.model.save(episode_model_path)
                 print(f"\nModel saved at episode {self.episode_count}: {episode_model_path}")
                 
-                # Also save replay buffer
-                replay_buffer_path = os.path.join(self.save_path, f"episode_{self.episode_count}_replay_buffer.pkl")
+                # Also save replay buffer using the correct stable_baselines3 method
+                replay_buffer_path = os.path.join(self.save_path, f"episode_{self.episode_count}_replay_buffer")
                 try:
-                    self.model.replay_buffer.save(replay_buffer_path)
-                    print(f"Replay buffer saved: {replay_buffer_path} ({len(self.model.replay_buffer)} experiences)")
+                    self.model.save_replay_buffer(replay_buffer_path)
+                    buffer_size = len(self.model.replay_buffer)
+                    print(f" Replay buffer saved: {replay_buffer_path}.pkl ({buffer_size} experiences)")
                 except Exception as e:
-                    print(f"Warning: Could not save replay buffer: {e}")
+                    print(f" ERROR: Could not save replay buffer: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
                 # Also save as "latest" for easy resuming
                 latest_model_path = os.path.join(self.save_path, "latest_model")
-                latest_replay_buffer_path = os.path.join(self.save_path, "latest_replay_buffer.pkl")
+                latest_replay_buffer_path = os.path.join(self.save_path, "latest_replay_buffer")
                 self.model.save(latest_model_path)
                 try:
-                    self.model.replay_buffer.save(latest_replay_buffer_path)
-                    print(f"Latest model and replay buffer updated: {latest_model_path}")
+                    self.model.save_replay_buffer(latest_replay_buffer_path)
+                    buffer_size = len(self.model.replay_buffer)
+                    print(f" Latest replay buffer saved: {latest_replay_buffer_path}.pkl ({buffer_size} experiences)")
                 except Exception as e:
-                    print(f"Warning: Could not save latest replay buffer: {e}")
+                    print(f" ERROR: Could not save latest replay buffer: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             if self.episode_count % 10 == 0:
                 mean_reward = np.mean(self.episode_rewards[-10:])
@@ -222,20 +228,38 @@ def setup_training(resume_from_checkpoint: bool = True):
                 model = SAC.load(latest_checkpoint, env=env)
                 starting_episode = episode_num
                 print(f"Successfully loaded model from episode {episode_num}")
+                print(f"  Model components loaded: policy, Q-networks, optimizer states")
                 
-                # Optional: Load replay buffer (not strictly necessary - model weights already encode learned knowledge)
-                # Loading buffer allows immediate learning without waiting for buffer to fill
-                latest_replay_buffer_path = os.path.join(checkpoint_dir, "latest_replay_buffer.pkl")
-                if os.path.exists(latest_replay_buffer_path):
+                # CRITICAL: Load replay buffer for proper training resumption
+                # The replay buffer contains the experiences the model learned from
+                # Without it, the agent starts with empty buffer and needs to refill before learning
+                latest_replay_buffer_path = os.path.join(checkpoint_dir, "latest_replay_buffer")
+                # Check both .pkl extension and without (stable_baselines3 adds .pkl automatically)
+                if os.path.exists(latest_replay_buffer_path + ".pkl") or os.path.exists(latest_replay_buffer_path):
                     try:
-                        model.replay_buffer.load(latest_replay_buffer_path)
-                        print(f"Replay buffer loaded: {latest_replay_buffer_path} ({len(model.replay_buffer)} experiences)")
-                        print("  Note: Model weights already encode learned knowledge. Buffer provides immediate learning.")
+                        model.load_replay_buffer(latest_replay_buffer_path)
+                        buffer_size = len(model.replay_buffer)
+                        print(f"? Replay buffer loaded: {latest_replay_buffer_path}.pkl")
+                        print(f" Buffer size: {buffer_size} experiences")
+                        
+                        # Check if buffer has enough experiences for learning
+                        if buffer_size < model.learning_starts:
+                            print(f" WARNING: Buffer has {buffer_size} experiences, but learning_starts={model.learning_starts}")
+                            print(f" Agent will collect {model.learning_starts - buffer_size} more steps before learning resumes")
+                        else:
+                            print(f" Buffer has enough experiences - learning will resume immediately")
                     except Exception as e:
-                        print(f"Warning: Could not load replay buffer: {e}")
-                        print("Continuing with empty replay buffer (will collect new experiences)...")
+                        print(f" ERROR: Could not load replay buffer: {e}")
+                        print(f" This will cause the agent to start from scratch!")
+                        print(f" Training will collect {model.learning_starts} new experiences before learning begins")
+                        import traceback
+                        traceback.print_exc()
                 else:
-                    print("No replay buffer found - will collect new experiences (model weights are already loaded)")
+                    print(f"? WARNING: No replay buffer found at {latest_replay_buffer_path}.pkl")
+                    print(f"  This means the agent will start with an EMPTY replay buffer!")
+                    print(f"  It will need to collect {model.learning_starts} new experiences before learning begins")
+                    print(f"  The model weights are loaded, but training will appear to start over")
+                    print(f"  This is why training seems to start from scratch - no replay buffer was saved!")
             except Exception as e:
                 print(f"Failed to load checkpoint: {e}")
                 print("Starting fresh training...")
@@ -328,23 +352,24 @@ def test_model(model_path: str, num_episodes: int = 3, deterministic: bool = Tru
         checkpoint_dir = os.path.dirname(model_path) if os.path.dirname(model_path) else "./checkpoints"
         model_name = os.path.basename(model_path).replace(".zip", "")
         
-        # Try to find corresponding replay buffer
+        # Try to find corresponding replay buffer (using correct stable_baselines3 method)
         if "latest_model" in model_name:
-            replay_buffer_path = os.path.join(checkpoint_dir, "latest_replay_buffer.pkl")
+            replay_buffer_path = os.path.join(checkpoint_dir, "latest_replay_buffer")
         elif "episode_" in model_name:
             # Extract episode number
             try:
                 parts = model_name.split("_")
                 episode_num_str = parts[1]
-                replay_buffer_path = os.path.join(checkpoint_dir, f"episode_{episode_num_str}_replay_buffer.pkl")
+                replay_buffer_path = os.path.join(checkpoint_dir, f"episode_{episode_num_str}_replay_buffer")
             except:
                 replay_buffer_path = None
         else:
             replay_buffer_path = None
         
-        if replay_buffer_path and os.path.exists(replay_buffer_path):
+        # Check if file exists (stable_baselines3 adds .pkl automatically)
+        if replay_buffer_path and (os.path.exists(replay_buffer_path + ".pkl") or os.path.exists(replay_buffer_path)):
             try:
-                model.replay_buffer.load(replay_buffer_path)
+                model.load_replay_buffer(replay_buffer_path)
                 print(f"Replay buffer loaded: {len(model.replay_buffer)} experiences")
             except Exception as e:
                 print(f"Note: Replay buffer found but not loaded (not needed for testing): {e}")
