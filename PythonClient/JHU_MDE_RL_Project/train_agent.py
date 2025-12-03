@@ -230,6 +230,56 @@ def setup_training(resume_from_checkpoint: bool = True):
                 print(f"Successfully loaded model from episode {episode_num}")
                 print(f"  Model components loaded: policy, Q-networks, optimizer states")
                 
+                # IMPORTANT: Display loaded model hyperparameters to verify they match expectations
+                print(f"\n  Loaded Model Hyperparameters:")
+                print(f"    buffer_size: {model.buffer_size}")
+                print(f"    learning_starts: {model.learning_starts}")
+                print(f"    learning_rate: {model.learning_rate}")
+                print(f"    ent_coef: {model.ent_coef} (type: {type(model.ent_coef).__name__})")
+                print(f"    batch_size: {model.batch_size}")
+                print(f"    gamma: {model.gamma}")
+                print(f"    tau: {model.tau}")
+                
+                # Check if loaded hyperparameters differ from current code settings
+                expected_buffer_size = 50000
+                expected_learning_starts = 5000
+                expected_ent_coef = 0.6
+                hyperparams_changed = False
+                
+                if model.buffer_size != expected_buffer_size:
+                    print(f"  WARNING: buffer_size mismatch! Loaded: {model.buffer_size}, Expected: {expected_buffer_size}")
+                    print(f"    NOTE: buffer_size cannot be changed after loading - using saved value")
+                if model.learning_starts != expected_learning_starts:
+                    print(f"  WARNING: learning_starts mismatch! Loaded: {model.learning_starts}, Expected: {expected_learning_starts}")
+                    print(f"    This may cause the agent to need more steps before learning resumes")
+                    hyperparams_changed = True
+                if isinstance(model.ent_coef, str):
+                    if model.ent_coef != 'auto':
+                        print(f"  WARNING: ent_coef is string '{model.ent_coef}' instead of float!")
+                    else:
+                        print(f"  INFO: ent_coef='auto' (adaptive) - this is fine, will maintain exploration")
+                elif isinstance(model.ent_coef, (int, float)):
+                    if abs(model.ent_coef - expected_ent_coef) > 0.01:
+                        print(f"  WARNING: ent_coef mismatch! Loaded: {model.ent_coef}, Expected: {expected_ent_coef}")
+                        print(f"    This may affect exploration behavior - agent may be too deterministic")
+                        # Try to update ent_coef if it's too low (to maintain exploration)
+                        if model.ent_coef < 0.3:
+                            print(f"    Attempting to update ent_coef to {expected_ent_coef} for better exploration...")
+                            try:
+                                model.ent_coef = expected_ent_coef
+                                print(f"    Updated ent_coef to {expected_ent_coef}")
+                                hyperparams_changed = True
+                            except Exception as e:
+                                print(f"    Could not update ent_coef: {e}")
+                
+                if hyperparams_changed:
+                    print(f"\n  IMPORTANT: Some hyperparameters differ from current code settings!")
+                    print(f"  The loaded model uses the hyperparameters it was saved with.")
+                    print(f"  If the agent appears to 'start over', it may be due to:")
+                    print(f"    1. Different learning_starts requiring buffer refill")
+                    print(f"    2. Different ent_coef affecting exploration/exploitation balance")
+                    print(f"    3. Replay buffer size mismatch with buffer_size")
+                
                 # CRITICAL: Load replay buffer for proper training resumption
                 # The replay buffer contains the experiences the model learned from
                 # Without it, the agent starts with empty buffer and needs to refill before learning
@@ -240,23 +290,25 @@ def setup_training(resume_from_checkpoint: bool = True):
                         model.load_replay_buffer(latest_replay_buffer_path)
                         # Get buffer size using the correct attribute (not len())
                         buffer_size = model.replay_buffer.size()
-                        print(f"  Replay buffer loaded: {latest_replay_buffer_path}.pkl")
+                        print(f"\n  Replay buffer loaded: {latest_replay_buffer_path}.pkl")
                         print(f"  Buffer size: {buffer_size} experiences")
                         
                         # Check if buffer has enough experiences for learning
                         if buffer_size < model.learning_starts:
                             print(f"  WARNING: Buffer has {buffer_size} experiences, but learning_starts={model.learning_starts}")
                             print(f"  Agent will collect {model.learning_starts - buffer_size} more steps before learning resumes")
+                            print(f"  This may cause the agent to appear to 'start over' until buffer is refilled")
                         else:
                             print(f"  Buffer has enough experiences - learning will resume immediately")
+                            print(f"  The model should continue from where it left off, not start over")
                     except Exception as e:
-                        print(f" ERROR: Could not load replay buffer: {e}")
-                        print(f" This will cause the agent to start from scratch!")
-                        print(f" Training will collect {model.learning_starts} new experiences before learning begins")
+                        print(f"\n  ERROR: Could not load replay buffer: {e}")
+                        print(f"  This will cause the agent to start from scratch!")
+                        print(f"  Training will collect {model.learning_starts} new experiences before learning begins")
                         import traceback
                         traceback.print_exc()
                 else:
-                    print(f"  WARNING: No replay buffer found at {latest_replay_buffer_path}.pkl")
+                    print(f"\n  WARNING: No replay buffer found at {latest_replay_buffer_path}.pkl")
                     print(f"  This means the agent will start with an EMPTY replay buffer!")
                     print(f"  It will need to collect {model.learning_starts} new experiences before learning begins")
                     print(f"  The model weights are loaded, but training will appear to start over")
@@ -272,15 +324,15 @@ def setup_training(resume_from_checkpoint: bool = True):
         model = SAC(
             "MlpPolicy",
             env,
-            learning_rate=3e-4,  # Reduced from 3e-4 for more stable learning
-            buffer_size=50000,
-            learning_starts=5000,
+            learning_rate=3e-4,  
+            buffer_size=100000,
+            learning_starts=10000,
             batch_size=256,
             tau=0.005,
             gamma=0.99,
             train_freq=(1, "step"),  # Train every step (more explicit)
             gradient_steps=1,
-            ent_coef='0.6',  # higher entropy coefficient for more exploration
+            ent_coef=0.4,  # higher entropy coefficient for more exploration (float, not string)
             policy_kwargs=dict(net_arch=[256, 256]),
             verbose=1,
             tensorboard_log="./tensorboard_logs/",
