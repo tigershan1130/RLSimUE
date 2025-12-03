@@ -85,7 +85,7 @@ class DroneObstacleEnv(gym.Env):
         # NOTE: Vertical drag is NOT applied - gravity is already handled by AirSim's physics engine
         self.enable_drag = USE_AIR_RESISTANCE  # Set to False to disable custom drag model
         self.drag_coefficient = 0.02  # Linear drag coefficient (velocity decay per second) - very light drag
-        # Acceleration rate: Real drones can accelerate 10-20 m/sý, but for responsive control we use very high value
+        # Acceleration rate: Real drones can accelerate 10-20 m/sï¿½, but for responsive control we use very high value
         # With dt ? 0.03s, this allows reaching max speed in 1-2 steps
         self.acceleration_rate = 500.0  # How fast we can accelerate (m/s^2) - very high for near-instantaneous response
         
@@ -98,7 +98,7 @@ class DroneObstacleEnv(gym.Env):
         ]
 
         # Reward function parameters
-        self.progress_scale = 50.0
+        self.progress_scale = 25.0
         self.progress_exponent = 1.2  # Exponent for progress reward (higher = more reward near target)
         self.obstacle_k = 1.0
         self.previous_normalized_distance = None
@@ -317,7 +317,7 @@ class DroneObstacleEnv(gym.Env):
             ])
             
             # Accelerate toward target velocity (very responsive - high acceleration rate)
-            # With acceleration_rate = 500 m/sý and dt ? 0.03s, max_accel ? 15 m/s per step
+            # With acceleration_rate = 500 m/sï¿½ and dt ? 0.03s, max_accel ? 15 m/s per step
             # This allows reaching max speed (10 m/s) in 1 step, making it nearly instantaneous
             max_accel = self.acceleration_rate * dt
             
