@@ -272,21 +272,21 @@ def setup_training(resume_from_checkpoint: bool = True):
         model = SAC(
             "MlpPolicy",
             env,
-            learning_rate=1e-4,  # Reduced from 3e-4 for more stable learning
-            buffer_size=100000,
-            learning_starts=10000,
+            learning_rate=3e-4,  # Reduced from 3e-4 for more stable learning
+            buffer_size=50000,
+            learning_starts=5000,
             batch_size=256,
             tau=0.005,
             gamma=0.99,
             train_freq=(1, "step"),  # Train every step (more explicit)
             gradient_steps=1,
-            ent_coef=0.2,  # Fixed entropy coefficient instead of 'auto' for stability
+            ent_coef='0.6',  # higher entropy coefficient for more exploration
             policy_kwargs=dict(net_arch=[256, 256]),
             verbose=1,
             tensorboard_log="./tensorboard_logs/",
             seed=42,
             target_update_interval=1,  # Update target network every step
-            target_entropy='auto',  # Auto-adjust target entropy but keep ent_coef fixed
+            target_entropy='auto',  # Auto-adjust target entropy (works with ent_coef='auto')
         )
     
     # Callbacks

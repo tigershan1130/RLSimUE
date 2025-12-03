@@ -16,7 +16,7 @@ from datetime import datetime
 STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
 FORWARD_ONLY = True
-USE_AIR_RESISTANCE = True
+USE_AIR_RESISTANCE = False
 REWARD_LOGGING = False  # Set to True to log rewards per step
 REWARD_LOG_FREQUENCY = 1  # Log every N steps (1 = every step, 10 = every 10 steps, etc.)
 
@@ -73,14 +73,14 @@ class DroneObstacleEnv(gym.Env):
         
         # Control parameters - Based on actual drone's speed reference
         # Increased speeds for faster movement:
-        # - Forward: 10.0 m/s (30 km/h) - faster forward flight
-        # - Lateral: 6.0 m/s (21.6 km/h) - faster sideward movement
-        # - Vertical: 6.0 m/s (21.6 km/h) - faster vertical ascent/descent
+        # - Forward: 8.0 m/s  - faster forward flight
+        # - Lateral: 4.0 m/s  - faster sideward movement
+        # - Vertical: 4.0 m/s - faster vertical ascent/descent
         # Note: These are still within realistic consumer/professional drone capabilities
         #       Racing drones can reach 30+ m/s, but these provide good balance
-        self.base_forward_speed = 10.0    # m/s (base speed when speed_factor=1) - increased from 5.0
-        self.max_lateral_speed = 6.0     # m/s - increased from 3.5
-        self.max_vertical_speed = 6.0    # m/s - increased from 3.5
+        self.base_forward_speed = 8.0    # m/s (base speed when speed_factor=1)
+        self.max_lateral_speed = 4.0     # m/s 
+        self.max_vertical_speed = 4.0    # m/s  
         
         # Drag/Air Resistance parameters
         # AirSim's physics engine doesn't model air resistance realistically.
@@ -104,8 +104,8 @@ class DroneObstacleEnv(gym.Env):
         ]
 
         # Reward function parameters
-        self.progress_scale = 100.0  # Scale for episode-end progress reward
-        self.progress_scale_per_step = 0.5  # Scale for per-step progress reward (smaller, continuous feedback)
+        self.progress_scale = 10.0  # Scale for episode-end progress reward
+        self.progress_scale_per_step = 0.3 # Scale for per-step progress reward (smaller, continuous feedback)
         self.progress_exponent = 1.2  # Exponent for progress reward (higher = more reward near target)
         self.obstacle_k = 1.0
         self.previous_normalized_distance = None
@@ -117,8 +117,8 @@ class DroneObstacleEnv(gym.Env):
         #self.overshot_penalty_max_distance = 10.0  # Maximum distance for scaling overshot penalty (meters)
         
         # Timer reward parameters
-        self.speed_reward_scale = 0.1    # Reward for maintaining speed
-        self.time_penalty_scale = 0.01   # Small penalty per step to encourage efficiency
+        self.speed_reward_scale = 0.01    # Reward for maintaining speed
+        self.time_penalty_scale = 0.005   # Small penalty per step to encourage efficiency
         # Boundary warning distance (meters). Within this distance, apply scaled penalty to -100 at boundary
         self.boundary_warning_distance = 3.0
         self.boundary_penalty_scale = 10.0
