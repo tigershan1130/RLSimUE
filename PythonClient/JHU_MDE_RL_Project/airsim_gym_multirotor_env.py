@@ -17,6 +17,8 @@ STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
 FORWARD_ONLY = True
 USE_AIR_RESISTANCE = True
+REWARD_LOGGING = False  # Set to True to log rewards per step
+REWARD_LOG_FREQUENCY = 1  # Log every N steps (1 = every step, 10 = every 10 steps, etc.)
 
 class DroneObstacleEnv(gym.Env):
     """
@@ -28,6 +30,10 @@ class DroneObstacleEnv(gym.Env):
     def __init__(self, vae_model_path: str, target_position: np.ndarray, 
                  world_bounds: list, max_steps: int = 1000):
         super(DroneObstacleEnv, self).__init__()
+        
+        # Reward logging configuration
+        self.reward_logging_enabled = REWARD_LOGGING
+        self.reward_log_frequency = REWARD_LOG_FREQUENCY
         
         # AirSim connection
         self.client = airsim.MultirotorClient()
@@ -99,6 +105,7 @@ class DroneObstacleEnv(gym.Env):
 
         # Reward function parameters
         self.progress_scale = 25.0
+        self.progress_scale_per_step = 0.5  # Scale for per-step progress reward (smaller, continuous feedback)
         self.progress_exponent = 1.2  # Exponent for progress reward (higher = more reward near target)
         self.obstacle_k = 1.0
         self.previous_normalized_distance = None
@@ -107,16 +114,16 @@ class DroneObstacleEnv(gym.Env):
         self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
         self.overshot_penalty_base = -50.0  # Base penalty for overshooting the target (will be scaled by distance)
         self.target_tolerance_yz = 1.0  # Tolerance in Y and Z directions for considering target reached when overshot on X
-        self.overshot_penalty_max_distance = 10.0  # Maximum distance for scaling overshot penalty (meters)
+        #self.overshot_penalty_max_distance = 10.0  # Maximum distance for scaling overshot penalty (meters)
         
         # Timer reward parameters
         self.speed_reward_scale = 0.1    # Reward for maintaining speed
         self.time_penalty_scale = 0.01   # Small penalty per step to encourage efficiency
         # Boundary warning distance (meters). Within this distance, apply scaled penalty to -100 at boundary
         self.boundary_warning_distance = 3.0
-        self.boundary_penalty_scale = 3.0
+        self.boundary_penalty_scale = 10.0
         # Directional weighting strength for 3x3 tiles (0 = uniform, 1 = fully directional)
-        self.direction_weight_k = 0.3
+        self.direction_weight_k = 0.6
         # Small tolerance for boundary checks to avoid false positives at edges
         self.boundary_epsilon = 0.05
 
@@ -240,6 +247,12 @@ class DroneObstacleEnv(gym.Env):
         self.episode_reward_total = 0.0
         self.component_times = {k: [] for k in self.component_times.keys()}
         self.last_termination_reason = None
+        
+        # Track initial distance for progress reward calculation at episode end
+        initial_position = self._get_current_position()
+        initial_relative_distance = self.target_position - initial_position
+        self.initial_distance = np.linalg.norm(initial_relative_distance)
+        self.initial_normalized_distance = min(self.initial_distance / self.max_expected_distance, 1.0)
         
         # Draw target visualization (thread-safe)
         self._draw_target_visualization()
@@ -415,6 +428,31 @@ class DroneObstacleEnv(gym.Env):
         if truncated:
             self.last_termination_reason = 'time_limit'
         
+        # Add progress reward at episode end (sparse reward)
+        progress_reward = 0.0
+        final_distance = None
+        if terminated or truncated:
+            # Calculate final distance
+            final_position = self._get_current_position()
+            final_relative_distance = self.target_position - final_position
+            final_distance = np.linalg.norm(final_relative_distance)
+            final_normalized_distance = min(final_distance / self.max_expected_distance, 1.0)
+            
+            # Calculate progress: how much closer did we get?
+            # Progress = (initial_distance - final_distance) / initial_distance
+            # This gives a value between 0 (no progress) and 1 (reached target)
+            if self.initial_distance > 0:
+                progress_ratio = (self.initial_distance - final_distance) / self.initial_distance
+                progress_ratio = max(0.0, min(1.0, progress_ratio))  # Clamp to [0, 1]
+                
+                # Apply exponential scaling for progress reward
+                # More progress = exponentially more reward
+                progress_reward = (progress_ratio ** self.progress_exponent) * self.progress_scale
+                
+                # Add progress reward to this step's reward and episode total
+                reward += progress_reward
+                self.episode_reward_total += progress_reward
+        
         # Calculate total step time
         step_duration = time.time() - step_start_time
         self.episode_step_times.append(step_duration)
@@ -437,7 +475,10 @@ class DroneObstacleEnv(gym.Env):
             'terminated': terminated,
             'truncated': truncated
         }
-
+        
+        # Log progress reward if episode ended
+        if (terminated or truncated) and progress_reward > 0 and final_distance is not None:
+            self.log(f"[Episode End] Progress Reward: {progress_reward:.3f} (initial_dist: {self.initial_distance:.2f}m, final_dist: {final_distance:.2f}m)\n")
 
         # Log episode summary if episode ended
         if terminated or truncated:
@@ -792,10 +833,12 @@ class DroneObstacleEnv(gym.Env):
         # Now time pure computation (excluding client calls)
         computation_start = time.time()
         if collision:
-            reward_breakdown['collision'] = -200.0
-            self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['collision'])
+            # Reduced penalty to reduce variance (still large enough to discourage)
+            reward_breakdown['collision'] = -100.0  # Reduced from -200.0
+            final_reward = total_reward + reward_breakdown['collision']
+            self._log_reward_breakdown(reward_breakdown, final_reward)
             self.last_termination_reason = 'collision'
-            return total_reward + reward_breakdown['collision'], True
+            return final_reward, True
         
         # 2. Boundary penalty (unified):
         # - If out-of-bounds (min distance <= 0): terminate with -100
@@ -812,12 +855,14 @@ class DroneObstacleEnv(gym.Env):
         ]
         min_distance_to_boundary = float(min(distances_to_boundaries))
         if min_distance_to_boundary <= -self.boundary_epsilon:
-            reward_breakdown['boundary'] = -200.0
+            # Reduced penalty to reduce variance (still large enough to discourage)
+            reward_breakdown['boundary'] = -100.0  # Reduced from -200.0
             # Add context for debugging unexpected OOB
             self.log(f"OOB: pos={position}, bounds={self.world_bounds}\n")
-            self._log_reward_breakdown(reward_breakdown, total_reward + reward_breakdown['boundary'])
+            final_reward = total_reward + reward_breakdown['boundary']
+            self._log_reward_breakdown(reward_breakdown, final_reward)
             self.last_termination_reason = 'out_of_bounds'
-            return total_reward + reward_breakdown['boundary'], True
+            return final_reward, True
         boundary_penalty = 0.0
         if min_distance_to_boundary < self.boundary_warning_distance:
             safe_ratio = max(0.0, min_distance_to_boundary / self.boundary_warning_distance)
@@ -852,23 +897,8 @@ class DroneObstacleEnv(gym.Env):
                 # Use Y/Z distance since X is already overshot
                 yz_distance = np.sqrt(y_distance**2 + z_distance**2)
                 
-                # Scale penalty based on distance: 
-                # - At tolerance distance (1.0m): minimum penalty (e.g., -10)
-                # - At max_distance (10.0m): maximum penalty (base penalty, e.g., -50)
-                # Linear interpolation between tolerance and max_distance
-                if yz_distance <= self.target_tolerance_yz:
-                    # Shouldn't reach here (handled above), but just in case
-                    penalty_scale = 0.2  # 20% of base penalty
-                else:
-                    # Scale from tolerance to max_distance
-                    distance_ratio = min(1.0, (yz_distance - self.target_tolerance_yz) / 
-                                       (self.overshot_penalty_max_distance - self.target_tolerance_yz))
-                    # Penalty scales from 0.2 (at tolerance) to 1.0 (at max_distance)
-                    penalty_scale = 0.2 + 0.8 * distance_ratio
-                
-                overshot_penalty = self.overshot_penalty_base * penalty_scale
-                reward_breakdown['missed_target'] = overshot_penalty
-                final_reward = total_reward + overshot_penalty
+                reward_breakdown['missed_target'] = self.overshot_penalty_base 
+                final_reward = total_reward + self.overshot_penalty_base 
                 self._log_reward_breakdown(reward_breakdown, final_reward)
                 self.last_termination_reason = 'missed_target_overshot_x'
                 return final_reward, True  # Return True to terminate episode, Gymnasium will call reset()
@@ -884,10 +914,26 @@ class DroneObstacleEnv(gym.Env):
             self.last_termination_reason = 'target_reached'
             return total_reward + 100.0 + time_bonus, True
         
-        # 4. Progress reward using normalized relative distance
-        progress_reward = self._calculate_progress_reward(normalized_relative_distance)
-        total_reward += progress_reward
-        reward_breakdown['progress'] = progress_reward
+        # 4. Progress reward - per-step for continuous learning signal
+        # Since SAC learns from every step via experience replay, we need per-step feedback
+        # Calculate progress based on distance improvement from previous step
+        current_distance = np.linalg.norm(relative_distance)
+        current_normalized_distance = min(current_distance / self.max_expected_distance, 1.0)
+        
+        progress_reward_per_step = 0.0
+        if self.previous_normalized_distance is not None:
+            # Reward for getting closer (negative change in distance = progress)
+            distance_change = self.previous_normalized_distance - current_normalized_distance
+            if distance_change > 0:  # Got closer
+                # Scale reward by how much closer we got
+                progress_reward_per_step = distance_change * self.progress_scale_per_step
+            # No penalty for moving away (let other rewards handle that)
+        
+        # Update for next step
+        self.previous_normalized_distance = current_normalized_distance
+        
+        total_reward += progress_reward_per_step
+        reward_breakdown['progress_per_step'] = progress_reward_per_step
         
         # 5. Obstacle reward (tiled approach) - reuse cached depth map from observation thread
         depth_image_start = time.time()
@@ -943,7 +989,8 @@ class DroneObstacleEnv(gym.Env):
         self.component_times['reward_computation'].append(computation_time)
 
         if self.current_step >= self.max_steps:
-            return -200.0, terminated
+            # Reduced penalty for time limit to reduce variance
+            return -100.0, terminated  # Reduced from -200.0
         
         # Log reward breakdown every 1000 steps ( NO Point of now, too spamming)
         #if self.current_step % 10 == 0:
@@ -952,7 +999,22 @@ class DroneObstacleEnv(gym.Env):
         self._last_dt = time.time() - self._last_step_time
         self._last_step_time = time.time()
         
-        return total_reward * self._last_dt, terminated
+        # FIXED: Don't multiply reward by dt - this causes high variance!
+        # The reward should be consistent per step, not scaled by timing variations
+        # If you need time-based rewards, normalize by a fixed timestep (e.g., 0.03s)
+        # return total_reward * self._last_dt, terminated  # OLD - causes variance
+        
+        # Clip reward to reduce variance from extreme values
+        # This prevents large reward spikes from destabilizing learning
+        max_reward_per_step = 100.0  # Maximum reward per step (before clipping)
+        min_reward_per_step = -100.0  # Minimum reward per step (before clipping)
+        clipped_reward = np.clip(total_reward, min_reward_per_step, max_reward_per_step)
+        
+        # Log reward per step (if enabled)
+        if self.reward_logging_enabled and self.current_step % self.reward_log_frequency == 0:
+            self._log_step_reward(clipped_reward, total_reward, reward_breakdown)
+        
+        return clipped_reward, terminated  # FIXED - consistent reward per step with clipping
 
     def _log_reward_breakdown(self, reward_breakdown: dict, total_reward: float):
         """Log detailed reward breakdown"""
@@ -961,6 +1023,15 @@ class DroneObstacleEnv(gym.Env):
         for component, value in reward_breakdown.items():
             self.log(f"  {component}: {value:.3f}\n")
         self.log("---\n")
+    
+    def _log_step_reward(self, clipped_reward: float, raw_reward: float, reward_breakdown: dict):
+        """Log reward per step (simpler format for frequent logging)"""
+        # Simple one-line log for per-step rewards
+        breakdown_str = ", ".join([f"{k}: {v:.2f}" for k, v in reward_breakdown.items() if abs(v) > 0.01])
+        if breakdown_str:
+            self.log(f"[Step {self.current_step}] Reward: {clipped_reward:.3f} (raw: {raw_reward:.3f}) | {breakdown_str}\n")
+        else:
+            self.log(f"[Step {self.current_step}] Reward: {clipped_reward:.3f} (raw: {raw_reward:.3f})\n")
 
     def _calculate_progress_reward(self, normalized_relative_distance: np.ndarray) -> float:
         """Calculate progress reward based on current distance to target (every step)
