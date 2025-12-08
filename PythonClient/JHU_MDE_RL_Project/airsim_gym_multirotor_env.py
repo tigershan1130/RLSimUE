@@ -1,4 +1,6 @@
 # airsim_gym_multirotor_env.py
+import pathlib
+
 import gymnasium as gym
 from gymnasium import spaces
 import airsim
@@ -11,8 +13,13 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import os
+import sys
 from datetime import datetime
-from depth_anything_v2.dpt import DepthAnythingV2
+from pathlib import Path
+print(str(pathlib.Path(__file__).parent.parent.parent))
+
+sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
+from MDE_testing.depth_anything_v2.dpt import DepthAnythingV2
 
 
 STEP_LOGGING = False
@@ -301,14 +308,14 @@ class DroneObstacleEnv(gym.Env):
         """Execute one environment step - loop action while waiting for observation"""
         step_start_time = time.time()
         self.current_step += 1
-        
         # Calculate time step for physics calculations
         if self._last_step_time is not None:
             dt = step_start_time - self._last_step_time
         else:
             dt = 0.03  # Default to 0.03s for first step
-        dt = max(0.001, min(dt, 0.1))  # Clamp dt to reasonable range (1ms to 100ms)
-        
+            dt = max(0.001, min(dt, 0.1))  # Clamp dt to reasonable range (1ms to 100ms)
+
+        # dt = max(0.001, min(dt, 0.1))  # Clamp dt to reasonable range (1ms to 100ms)
         # Execute action synchronously (thread-safe)
         action_start = time.time()
 
