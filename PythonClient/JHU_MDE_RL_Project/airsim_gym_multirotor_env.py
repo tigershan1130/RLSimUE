@@ -25,7 +25,7 @@ from MDE_testing.depth_anything_v2.dpt import DepthAnythingV2
 STEP_LOGGING = False
 DEPTH_MAP_LOGGING = False
 FORWARD_ONLY = True
-USE_AIR_RESISTANCE = True
+USE_AIR_RESISTANCE = False
 REWARD_LOGGING = False  # Set to True to log rewards per step
 REWARD_LOG_FREQUENCY = 1  # Log every N steps (1 = every step, 10 = every 10 steps, etc.)
 
@@ -82,14 +82,14 @@ class DroneObstacleEnv(gym.Env):
         
         # Control parameters - Based on actual drone's speed reference
         # Increased speeds for faster movement:
-        # - Forward: 10.0 m/s (30 km/h) - faster forward flight
-        # - Lateral: 6.0 m/s (21.6 km/h) - faster sideward movement
-        # - Vertical: 6.0 m/s (21.6 km/h) - faster vertical ascent/descent
+        # - Forward: 8.0 m/s  - faster forward flight
+        # - Lateral: 4.0 m/s  - faster sideward movement
+        # - Vertical: 4.0 m/s - faster vertical ascent/descent
         # Note: These are still within realistic consumer/professional drone capabilities
         #       Racing drones can reach 30+ m/s, but these provide good balance
-        self.base_forward_speed = 10.0    # m/s (base speed when speed_factor=1) - increased from 5.0
-        self.max_lateral_speed = 6.0     # m/s - increased from 3.5
-        self.max_vertical_speed = 6.0    # m/s - increased from 3.5
+        self.base_forward_speed = 8.0    # m/s (base speed when speed_factor=1)
+        self.max_lateral_speed = 4.0     # m/s 
+        self.max_vertical_speed = 4.0    # m/s  
         
         # Drag/Air Resistance parameters
         # AirSim's physics engine doesn't model air resistance realistically.
@@ -113,21 +113,21 @@ class DroneObstacleEnv(gym.Env):
         ]
 
         # Reward function parameters
-        self.progress_scale = 25.0
-        self.progress_scale_per_step = 0.5  # Scale for per-step progress reward (smaller, continuous feedback)
+        self.progress_scale = 10.0  # Scale for episode-end progress reward
+        self.progress_scale_per_step = 0.3 # Scale for per-step progress reward (smaller, continuous feedback)
         self.progress_exponent = 1.2  # Exponent for progress reward (higher = more reward near target)
         self.obstacle_k = 1.0
         self.previous_normalized_distance = None
         self.velocity_magnitude_penalty = 0.1  # Penalty for high velocity
         self.previous_velocity = None  # Track previous velocity for smoothness penalty
-        self.velocity_change_penalty_scale = 2.0  # Penalty for large velocity changes
+        self.velocity_change_penalty_scale = 1.0  # Penalty for large velocity changes
         self.overshot_penalty_base = -50.0  # Base penalty for overshooting the target (will be scaled by distance)
-        self.target_tolerance_yz = 1.0  # Tolerance in Y and Z directions for considering target reached when overshot on X
+        self.target_tolerance_yz = 2.0  # Tolerance in Y and Z directions for considering target reached when overshot on X
         #self.overshot_penalty_max_distance = 10.0  # Maximum distance for scaling overshot penalty (meters)
         
         # Timer reward parameters
-        self.speed_reward_scale = 0.1    # Reward for maintaining speed
-        self.time_penalty_scale = 0.01   # Small penalty per step to encourage efficiency
+        self.speed_reward_scale = 0.01    # Reward for maintaining speed
+        self.time_penalty_scale = 0.005   # Small penalty per step to encourage efficiency
         # Boundary warning distance (meters). Within this distance, apply scaled penalty to -100 at boundary
         self.boundary_warning_distance = 3.0
         self.boundary_penalty_scale = 10.0
@@ -438,7 +438,7 @@ class DroneObstacleEnv(gym.Env):
         reward_start = time.time()
         if(STEP_LOGGING):
             self.log(f"[Step {self.current_step}] Reward calculation START at {reward_start:.6f}\n")
-        reward, terminated = self._calculate_reward(observation, action)
+        reward, terminated = self._calculate_reward(observation, action, dt)
         reward_time = time.time() - reward_start
         self.component_times['reward_calculation'].append(reward_time)
         if(STEP_LOGGING):
@@ -847,7 +847,7 @@ class DroneObstacleEnv(gym.Env):
             mu, logvar = self.vae.encode(depth_tensor)
             return mu.cpu().numpy().flatten()
 
-    def _calculate_reward(self, observation: np.ndarray, action: np.ndarray) -> Tuple[float, bool]:
+    def _calculate_reward(self, observation: np.ndarray, action: np.ndarray, dt: float) -> Tuple[float, bool]:
         """Calculate reward and done flag using relative distance"""
         reward_func_start = time.time()
 
@@ -932,18 +932,42 @@ class DroneObstacleEnv(gym.Env):
         
         # Check if we've passed the target on X axis (overshot forward)
         if drone_x > target_x:
+            # IMPORTANT: Check if previous frame's position was within target range
+            # If drone was moving fast and passed through target, we should still count it as success
+            # Previous position = current_position - previous_velocity * dt
+            previous_position_was_in_range = False
+            if self.previous_velocity is not None and dt > 0:
+                # Estimate previous position by extrapolating backwards using current step's dt
+                # dt represents the time between previous step and current step
+                previous_position = position - self.previous_velocity * dt
+                previous_relative_distance = self.target_position - previous_position
+                previous_distance_magnitude = np.linalg.norm(previous_relative_distance)
+                
+                # Check if previous position was within target tolerance
+                if previous_distance_magnitude < 0.02:  # Same threshold as direct target check
+                    previous_position_was_in_range = True
+                    if STEP_LOGGING:
+                        self.log(f"[Step {self.current_step}] Target reached via previous frame check: "
+                                f"current_pos={position}, previous_pos={previous_position}, "
+                                f"previous_dist={previous_distance_magnitude:.4f}m, "
+                                f"velocity={self.previous_velocity}, dt={dt:.4f}s\n")
+            
             # Falloff: if Y and Z directions are very close to target, we actually hit the target
             # This rewards the agent for getting close even if it overshoots slightly on X
             y_distance = abs(relative_distance[1])
             z_distance = abs(relative_distance[2])
             
-            if y_distance < self.target_tolerance_yz and z_distance < self.target_tolerance_yz:
-                # Close enough in Y and Z - consider it target reached!
+            # Check if we hit target (either current Y/Z close OR previous frame was in range)
+            if previous_position_was_in_range or (y_distance < self.target_tolerance_yz and z_distance < self.target_tolerance_yz):
+                # Close enough in Y and Z OR previous frame was in range - consider it target reached!
                 time_bonus = max(0, (self.max_steps - self.current_step) / self.max_steps) * 50.0
                 reward_breakdown['target_reached'] = 100.0
                 reward_breakdown['time_bonus'] = time_bonus
+                if previous_position_was_in_range:
+                    self.last_termination_reason = 'target_reached_previous_frame'
+                else:
+                    self.last_termination_reason = 'target_reached'
                 self._log_reward_breakdown(reward_breakdown, total_reward + 100.0 + time_bonus)
-                self.last_termination_reason = 'target_reached'
                 return total_reward + 100.0 + time_bonus, True
             else:
                 # Overshot on X and not close enough in Y/Z - missed target
