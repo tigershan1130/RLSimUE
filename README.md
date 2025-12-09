@@ -131,7 +131,50 @@ We are thinking about TD3+CNN or SAC+VAE.
 ![Screenshot](https://private-user-images.githubusercontent.com/39791762/524033886-a6efae6e-75f2-4470-aafa-e9ae53ba3609.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NjUyNDQxNDksIm5iZiI6MTc2NTI0Mzg0OSwicGF0aCI6Ii8zOTc5MTc2Mi81MjQwMzM4ODYtYTZlZmFlNmUtNzVmMi00NDcwLWFhZmEtZTlhZTUzYmEzNjA5LnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNTEyMDklMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjUxMjA5VDAxMzA0OVomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPWJhYzRkZTUxMDZlMDNiZmNhZjE2YjYzMmMzZjE3NTJhZDhiOTRhY2VkNmVhN2Q3MjJlZjJkNTZjNDU1Mzk0ZGYmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0In0.-QX1kDQmC6KgN4Tp31o1NtMUmOcYt6aEpjcSQPQOmME)
 
 The agent’s improvement during training is shown in the Table. In the sparse environment, clear learning is observed after approximately 750 episodes, with substantial reward improvement from initial to final episodes. The dense environment presented a more challenging learning problem, with negative rewards persisting throughout the training. When considering these results, it is important to note that these two trainings were conducted on different hardware; for the dense environment we were only able to train 55,773 steps in 8.31 hours while for the sparse environment we were able to train 99,929 steps in 7.38 hours, close to double the speed. With more training, we would expect to see convergence in our reinforcement learning model training in the dense environment. Consideration should also be made for the impact of progress reward toward the training, as training on hardware with a higher rate of steps-per-second could mean more positive reward being accumulated.
- 
+
+
+ ## 🚀 Future Work / TODO
+
+### 1. **Scalable & Parallel Training Infrastructure**
+- Migrate from single-machine RL training to a distributed framework using **Soft Actor-Critic (SAC)**.
+- Leverage Linux-based HPC clusters for:
+  - Parallel experience collection
+  - Faster convergence and improved sample efficiency
+  - Support for larger-scale policies and curriculum learning
+
+### 2. **Enhanced Environment Complexity & Reward Shaping**
+- Introduce **dynamic obstacles**, variable terrain, and adverse weather (wind, fog).
+- Refine reward function using **3D pathfinding priors** (e.g., 3D Dijkstra’s / A*) for reward shaping:
+  - Reduce target overshoot
+  - Improve success rate & path smoothness
+  - Enable progressive guidance in sparse-reward settings
+
+### 3. **Zero-Shot Generalization Evaluation**
+- Test trained policies in **unseen, out-of-distribution environments** (no fine-tuning).
+- Quantify robustness and transferability—critical for real-world deployment readiness.
+
+### 4. **Realistic Control Stack for Sim-to-Real Transfer**
+> ☑️ *Goal: Close the sim-to-real gap via a production-grade control architecture.*
+
+#### Proposed Architecture:
+- **Hierarchical Control Pipeline**:
+  - **High-level (RL Agent)**: Outputs waypoints or trajectory segments (not raw velocities)
+  - **Mid-level (Trajectory Planner)**: Generates dynamically feasible, smooth trajectories
+  - **Low-level (Flight Controller)**: PID or MPC for actuator-level commands (e.g., motor PWM)
+
+#### Key Upgrades:
+- ✅ **ROS integration** as middleware (standardizes sim ↔ real interface)
+- ✅ **PX4 SITL (Software-in-the-Loop)** for realistic flight dynamics & sensor emulation
+- ✅ **AirSim + ROS Bridge**: Use AirSim as physics engine, but bypass built-in controllers  
+  → Expose raw IMU/GPS/vision data; accept low-level actuator commands
+- ✅ Enforce physical constraints: max tilt, acceleration, actuator saturation, and latency
+
+#### Expected Benefits:
+- Realistic actuator dynamics & sensor fusion
+- Consistent control stack across simulation and hardware
+- Built-in safety via low-level constraint enforcement
+- Easier integration with commercial autopilots (PX4/ArduPilot)
+- 
 ## Reference:
 1. Alberto Musa, etc.,"A Method for Accelerated Simulations of Reinforcement Learning Tasks of UAVs in AirSim", 2022/05/17, https://personales.upv.es/thinkmind/dl/conferences/simul/simul_2022/simul_2022_1_90_50041.pdf, DOI  - 10.1145/3528416.3530865
 2. Jeremy Roghair, Kyungtae Ko, Amir Ehsan Niaraki Asli, Ali Jannesari. "A Vision Based Deep Reinforcement Learning Algorithm for UAV Obstacle Avoidance." arXiv preprint arXiv:2103.06403 (2021), https://arxiv.org/pdf/2103.06403
