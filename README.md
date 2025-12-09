@@ -153,7 +153,16 @@ The agent’s improvement during training is shown in the Table. In the sparse e
 - Test trained policies in **unseen, out-of-distribution environments** (no fine-tuning).
 - Quantify robustness and transferability—critical for real-world deployment readiness.
 
-### 4. **Realistic Control Stack for Sim-to-Real Transfer**
+### 4. **Behavior Cloning (BC) for Policy Initialization & Robustness**
+- Use **expert demonstrations** (e.g., from motion-captured human pilots, optimal planners like 3D A*, or teleoperated flights) to pre-train or warm-start the RL policy.
+- Implement **supervised BC** (e.g., imitation learning with ResNet or Transformer-based encoders for state-action mapping) to:
+  - Accelerate RL convergence and reduce sample complexity
+  - Improve stability in early training and avoid catastrophic failures
+  - Provide fallback behavior in safety-critical states (e.g., near obstacles)
+- Extend to **DAgger (Dataset Aggregation)** for iterative policy improvement and distribution shift correction.
+- *Long-term synergy*: Combine BC with RL in a **hybrid BC+RL framework** (e.g., BC for low-level stabilization, RL for high-level exploration), aligning with the hierarchical control vision in §4.
+
+### 5. **Realistic Control Stack for Sim-to-Real Transfer**
 > ☑️ *Goal: Close the sim-to-real gap via a production-grade control architecture.*
 
 #### Proposed Architecture:
