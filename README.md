@@ -160,7 +160,7 @@ The agent’s improvement during training is shown in the Table. In the sparse e
   - Improve stability in early training and avoid catastrophic failures
   - Provide fallback behavior in safety-critical states (e.g., near obstacles)
 - Extend to **DAgger (Dataset Aggregation)** for iterative policy improvement and distribution shift correction.
-- *Long-term synergy*: Combine BC with RL in a **hybrid BC+RL framework** (e.g., BC for low-level stabilization, RL for high-level exploration), aligning with the hierarchical control vision in §4.
+- *Long-term synergy*: Combine BC with RL in a **hybrid BC+RL framework** (e.g., BC for low-level stabilization, RL for high-level exploration), aligning with the hierarchical control vision in below section 5.
 
 ### 5. **Realistic Control Stack for Sim-to-Real Transfer**
 > ☑️ *Goal: Close the sim-to-real gap via a production-grade control architecture.*
