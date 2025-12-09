@@ -184,8 +184,17 @@ The agent’s improvement during training is shown in the Table. In the sparse e
 - Built-in safety via low-level constraint enforcement
 - Easier integration with commercial autopilots (PX4/ArduPilot)
   
-## Reference:
-1. Alberto Musa, etc.,"A Method for Accelerated Simulations of Reinforcement Learning Tasks of UAVs in AirSim", 2022/05/17, https://personales.upv.es/thinkmind/dl/conferences/simul/simul_2022/simul_2022_1_90_50041.pdf, DOI  - 10.1145/3528416.3530865
-2. Jeremy Roghair, Kyungtae Ko, Amir Ehsan Niaraki Asli, Ali Jannesari. "A Vision Based Deep Reinforcement Learning Algorithm for UAV Obstacle Avoidance." arXiv preprint arXiv:2103.06403 (2021), https://arxiv.org/pdf/2103.06403
-3. Zhihan Xue, Tad Gonsalves., "Vision Based Drone Obstacle Avoidance by Deep Reinforcement Learning", DOI:10.3390/ai2030023, August 2021, https://www.researchgate.net/publication/354017223_Vision_Based_Drone_Obstacle_Avoidance_by_Deep_Reinforcement_Learning
-4. Davide Falanga, Kevin Kleber, Davide Scaramuzza, “Dynamic Obstacle Avoidance for Quadrotors with Event Cameras”, Science Robotics, March 18, 2020. DOI: 10.1126/scirobotics.aaz9712
+## References
+
+1. Haarnoja, T., Zhou, A., Abbeel, P., & Levine, S. (2018). Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor. In *Proceedings of the 35th International Conference on Machine Learning* (Vol. 80, pp. 1861–1870). PMLR. https://proceedings.mlr.press/v80/haarnoja18b.html  
+2. Musa, A., et al. (2022). A method for accelerated simulations of reinforcement learning tasks of UAVs in AirSim. *SIMUL 2022: The Fourteenth International Conference on Advances in System Simulation*. ThinkMind. https://doi.org/10.1145/3528416.3530865  
+3. Roghair, J., Ko, K., Niaraki Asli, A. E., & Jannesari, A. (2021). A vision based deep reinforcement learning algorithm for UAV obstacle avoidance. *arXiv preprint arXiv:2103.06403*. https://arxiv.org/abs/2103.06403  
+4. Saunders, J., Saeedi, S., & Li, W. (2022). Parallel reinforcement learning simulation for visual quadrotor navigation. *arXiv preprint arXiv:2209.11094*. https://doi.org/10.48550/arXiv.2209.11094  
+5. Shah, S., Dey, D., Lovett, C., & Kapoor, A. (2017). AirSim: High-fidelity visual and physical simulation for autonomous vehicles. *arXiv preprint arXiv:1705.05065*. https://doi.org/10.48550/arXiv.1705.05065  
+6. Suhoi, D. (2024, July 10). *Metric and relative monocular depth estimation: An overview – fine-tuning Depth Anything v2*. Hugging Face Community. https://huggingface.co/blog/metric-and-relative-monocular-depth  
+7. Tu, L., et al. (2024). *DepthAnything-on-Browser* [Source code]. GitHub. https://github.com/akbartus/DepthAnything-on-Browser  
+   > Accessed: 2025-02-07.
+8. Xue, Z., & Gonsalves, T. (2021). Vision based drone obstacle avoidance by deep reinforcement learning. *AI*, *2*(3), 366–380. https://doi.org/10.3390/ai2030023  
+9. Yang, L., Kang, B., Huang, Z., Zhao, Z., Xu, X., Feng, J., & Zhao, H. (2024). Depth Anything v2. *arXiv preprint arXiv:2406.09414*. https://doi.org/10.48550/arXiv.2406.09414  
+10. Zheng, H., Rajadnya, S., & Zakhor, A. (2024). Monocular depth estimation for drone obstacle avoidance in indoor environments. In *2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)* (pp. 10027–10034). IEEE. https://doi.org/10.1109/IROS58592.2024.10802577  
+11. Falanga, D., Kleber, K., & Scaramuzza, D. (2020). Dynamic obstacle avoidance for quadrotors with event cameras. *Science Robotics*, *5*(40), eaaz9712. https://doi.org/10.1126/scirobotics.aaz9712  
